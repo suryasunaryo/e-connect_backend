@@ -1,0 +1,15 @@
+{
+    "keep": {
+        "days": true,
+        "amount": 14
+    },
+    "auditLog": "C:\\project\\e-connect\\Development\\backend\\storage\\logs\\.8e370cbc8b95583096ca75136b4f435e21b9bd7f-audit.json",
+    "files": [
+        {
+            "date": 1767078915761,
+            "name": "C:\\project\\e-connect\\Development\\backend\\storage\\logs\\reverb-2025-12-30.log",
+            "hash": "1fe2d00f4ccc5c3c7cf8cf01c8914648b780cd28f80ee202fb256d51a70d962b"
+        }
+    ],
+    "hashType": "sha256"
+}

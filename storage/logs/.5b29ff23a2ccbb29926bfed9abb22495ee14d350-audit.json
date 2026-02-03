@@ -1,0 +1,15 @@
+{
+    "keep": {
+        "days": true,
+        "amount": 14
+    },
+    "auditLog": "C:\\project\\e-connect\\Development\\backend\\storage\\logs\\.5b29ff23a2ccbb29926bfed9abb22495ee14d350-audit.json",
+    "files": [
+        {
+            "date": 1767078915751,
+            "name": "C:\\project\\e-connect\\Development\\backend\\storage\\logs\\laravel-2025-12-30.log",
+            "hash": "faaa93ba52cd302a7ef23cb904338bec4a64d5ef178e145611c91024d1c3ba9c"
+        }
+    ],
+    "hashType": "sha256"
+}

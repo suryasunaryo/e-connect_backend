@@ -1,0 +1,15 @@
+{
+    "keep": {
+        "days": true,
+        "amount": 14
+    },
+    "auditLog": "C:\\project\\e-connect\\Development\\backend\\storage\\logs\\.d2fb46442fbde2f5a34451ab5c252012e1c08f59-audit.json",
+    "files": [
+        {
+            "date": 1767078915758,
+            "name": "C:\\project\\e-connect\\Development\\backend\\storage\\logs\\queue-worker-error-2025-12-30.log",
+            "hash": "c5611c5540d0458df7d92e63420d00f0de118570741b26e88ee419cf272f0c62"
+        }
+    ],
+    "hashType": "sha256"
+}

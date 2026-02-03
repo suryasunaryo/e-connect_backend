@@ -1,0 +1,55 @@
+├── backend
+│   ├── Struktur.txt
+│   ├── database.sql
+│   ├── package.json
+│   └── src
+│       ├── config
+│       │   └── database.js
+│       ├── controllers
+│       │   └── truckController.js
+│       ├── middleware
+│       │   └── auth.js
+│       ├── migrations
+│       │   ├── migrate.js
+│       │   ├── setup-mysql.js
+│       │   ├── test-connection.js
+│       │   └── verify-database.js
+│       ├── routes
+│       │   ├── auth.js
+│       │   ├── index.js
+│       │   └── trucks.js
+│       └── server.js
+├── database.sqlite
+├── frontend
+│   ├── index.html
+│   ├── package.json
+│   ├── postcss.config.js
+│   ├── src
+│   │   ├── App.tsx
+│   │   ├── components
+│   │   │   ├── ConnectionStatus.tsx
+│   │   │   ├── Layout.tsx
+│   │   │   ├── QueueDisplay.tsx
+│   │   │   └── TruckForm.tsx
+│   │   ├── contexts
+│   │   │   ├── AuthContext.tsx
+│   │   │   └── ConnectionContext.tsx
+│   │   ├── index.css
+│   │   ├── main.tsx
+│   │   ├── pages
+│   │   │   ├── CalendarDashboard.tsx
+│   │   │   ├── Dashboard.tsx
+│   │   │   ├── DisplayPage.tsx
+│   │   │   └── Login.tsx
+│   │   ├── services
+│   │   │   ├── api.ts
+│   │   │   └── connectionService.ts
+│   │   ├── types
+│   │   │   └── index.ts
+│   │   └── vite-env.d.ts
+│   ├── tailwind.config.js
+│   ├── tsconfig.json
+│   ├── tsconfig.node.json
+│   └── vite.config.ts
+├── install-dependencies.sh
+└── setup-project.sh
