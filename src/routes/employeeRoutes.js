@@ -13,6 +13,7 @@ import {
   deleteEmployee,
   createUserFromEmployee,
   autoCreateUsers,
+  getEmployeeByRfid,
 } from "../controllers/employeeController.js";
 import { activityLogger } from "../middleware/activityLogger.js";
 
@@ -117,6 +118,9 @@ router.get("/template", async (req, res) => {
 
 // GET all employees
 router.get("/", getAllEmployees);
+
+// SCAN RFID
+router.post("/scan-rfid", getEmployeeByRfid);
 
 // GET employee by ID
 router.get(

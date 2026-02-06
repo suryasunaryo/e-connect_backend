@@ -66,6 +66,49 @@ export const getEmployeeById = async (req, res) => {
 };
 
 /**
+ * GET EMPLOYEE BY RFID
+ */
+export const getEmployeeByRfid = async (req, res) => {
+  try {
+    const { rfid_number } = req.body;
+
+    if (!rfid_number) {
+      return res.status(400).json({ error: "RFID number is required" });
+    }
+
+    const employee = await dbHelpers.queryOne(
+      `
+      SELECT 
+        e.full_name, 
+        e.nik, 
+        e.picture, 
+        e.employee_status,
+        d.dept_name as department_name,
+        p.position_name,
+        t.title_name,
+        b.branch_name
+      FROM employees e 
+      LEFT JOIN departments d ON e.department_id = d.id 
+      LEFT JOIN positions p ON e.position_id = p.id
+      LEFT JOIN titles t ON e.title_id = t.id
+      LEFT JOIN branches b ON e.branch_id = b.id
+      WHERE e.rfid_number = ? AND e.deleted_at IS NULL
+    `,
+      [rfid_number],
+    );
+
+    if (!employee) {
+      return res.status(404).json({ error: "Card not recognized" });
+    }
+
+    res.json(employee);
+  } catch (error) {
+    console.error("❌ Error scanning RFID:", error);
+    res.status(500).json({ error: "Failed to scan RFID" });
+  }
+};
+
+/**
  * CREATE EMPLOYEE
  */
 export const createEmployee = async (req, res) => {
