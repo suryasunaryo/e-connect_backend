@@ -143,6 +143,7 @@ router.post(
           branch_id: user.branch_id,
           position_id: user.position_id,
           profile_picture: user.profile_picture,
+          last_login: user.last_login,
         },
       });
     } catch (error) {
