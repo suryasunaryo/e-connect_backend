@@ -639,6 +639,33 @@ const createTablesIfNeeded = async (pool) => {
           usedByErr.message,
         );
       }
+
+      // portal_settings
+      const [tablePortal] = await connection.execute(
+        "SELECT COUNT(*) as count FROM information_schema.tables WHERE table_schema = ? AND table_name = 'portal_settings'",
+        [dbConfig.database],
+      );
+      if (tablePortal[0].count === 0) {
+        console.log("creating: portal_settings table...");
+        await connection.execute(`
+          CREATE TABLE portal_settings (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            portal_name VARCHAR(100) NOT NULL,
+            description TEXT,
+            category VARCHAR(50),
+            url VARCHAR(255),
+            portal_image VARCHAR(255),
+            is_active TINYINT(1) DEFAULT 1,
+            used_by_type VARCHAR(50),
+            used_by_value TEXT,
+            is_deleted TINYINT(1) DEFAULT 0,
+            deleted_at TIMESTAMP NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+          )
+        `);
+        console.log("✅ portal_settings table created successfully");
+      }
     } catch (migErr) {
       console.error("Migration error (Notifications/Views):", migErr.message);
     }

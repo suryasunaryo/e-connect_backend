@@ -7,6 +7,7 @@ import attendanceRoutes from "./attendanceRoutes.js";
 import dashboardRoutes from "./dashboardRoutes.js";
 import notificationRoutes from "./notificationRoutes.js";
 import itemViewRoutes from "./itemViewRoutes.js";
+import userFavoritesRoutes from "./userFavoritesRoutes.js";
 
 const router = express.Router();
 
@@ -25,6 +26,7 @@ router.use("/attendance", attendanceRoutes);
 router.use("/dashboard", dashboardRoutes);
 router.use("/notifications", notificationRoutes);
 router.use("/items", itemViewRoutes);
+router.use("/user-favorites", userFavoritesRoutes);
 console.log("✅ Dashboard routes loaded: /api/dashboard");
 
 // =======================================================
