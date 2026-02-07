@@ -14,12 +14,16 @@ export const getAllEmployees = async (req, res) => {
         d.dept_name as department_name,
         p.position_name as position_name,
         t.title_name as title_name,
-        b.branch_name as branch_name
+        b.branch_name as branch_name,
+        l.office_name as location_name,
+        s.shift_name as shift_name
       FROM employees e 
       LEFT JOIN departments d ON e.department_id = d.id 
       LEFT JOIN positions p ON e.position_id = p.id
       LEFT JOIN titles t ON e.title_id = t.id
       LEFT JOIN branches b ON e.branch_id = b.id
+      LEFT JOIN location l ON e.location_id = l.id
+      LEFT JOIN attendance_shifts s ON e.employee_shift_id = s.shift_id
       WHERE e.deleted_at IS NULL 
       ORDER BY e.full_name ASC
     `);
@@ -43,12 +47,16 @@ export const getEmployeeById = async (req, res) => {
         d.dept_name as department_name,
         p.position_name,
         t.title_name,
-        b.branch_name
+        b.branch_name,
+        l.office_name as location_name,
+        s.shift_name as shift_name
       FROM employees e 
       LEFT JOIN departments d ON e.department_id = d.id 
       LEFT JOIN positions p ON e.position_id = p.id
       LEFT JOIN titles t ON e.title_id = t.id
       LEFT JOIN branches b ON e.branch_id = b.id
+      LEFT JOIN location l ON e.location_id = l.id
+      LEFT JOIN attendance_shifts s ON e.employee_shift_id = s.shift_id
       WHERE e.id = ? AND e.deleted_at IS NULL
     `,
       [id],
@@ -501,9 +509,13 @@ export const updateEmployee = async (req, res) => {
       `
       SELECT 
         e.*, 
-        d.dept_name as department_name
+        d.dept_name as department_name,
+        l.office_name as location_name,
+        s.shift_name as shift_name
       FROM employees e 
       LEFT JOIN departments d ON e.department_id = d.id 
+      LEFT JOIN location l ON e.location_id = l.id
+      LEFT JOIN attendance_shifts s ON e.employee_shift_id = s.shift_id
       WHERE e.id = ?
     `,
       [id],

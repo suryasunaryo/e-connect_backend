@@ -171,6 +171,30 @@ const createTablesIfNeeded = async (pool) => {
       console.log("✅ Tables already exist");
     }
 
+    // ---------------------------------------------------------
+    // MIGRATION: Ensure profile_picture column exists in users
+    // ---------------------------------------------------------
+    try {
+      const [userColCheck] = await connection.execute(
+        "SELECT COUNT(*) as count FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = ? AND TABLE_NAME = 'users' AND COLUMN_NAME = 'profile_picture'",
+        [dbConfig.database],
+      );
+      if (userColCheck[0].count === 0) {
+        console.log(
+          "migrating: Adding profile_picture column to users table...",
+        );
+        await connection.execute(
+          "ALTER TABLE users ADD COLUMN profile_picture VARCHAR(255) NULL AFTER email",
+        );
+        console.log("✅ profile_picture column added to users.");
+      }
+    } catch (migErr) {
+      console.error(
+        "Migration warning (users.profile_picture):",
+        migErr.message,
+      );
+    }
+
     // Check and create work_calendar table
     const [workCalendarTable] = await connection.execute(
       "SELECT COUNT(*) as count FROM information_schema.tables WHERE table_schema = ? AND table_name = 'work_calendar'",
@@ -693,6 +717,30 @@ const createTablesIfNeeded = async (pool) => {
       }
     } catch (migErr) {
       console.error("Migration error (Notifications/Views):", migErr.message);
+    }
+
+    // 🚀 Migration for Employee Setup: add location_id and employee_shift_id
+    try {
+      const [cols] = await connection.execute("SHOW COLUMNS FROM employees");
+      const columnNames = cols.map((c) => c.Field);
+
+      if (!columnNames.includes("location_id")) {
+        console.log("Adding location_id to employees table...");
+        await connection.execute(
+          "ALTER TABLE employees ADD COLUMN location_id INT NULL AFTER position_id",
+        );
+      }
+      if (!columnNames.includes("employee_shift_id")) {
+        console.log("Adding employee_shift_id to employees table...");
+        await connection.execute(
+          "ALTER TABLE employees ADD COLUMN employee_shift_id INT NULL AFTER location_id",
+        );
+      }
+    } catch (migErr) {
+      console.warn(
+        "Migration warning (employees setup columns):",
+        migErr.message,
+      );
     }
   } catch (error) {
     console.error("❌ Error creating tables:", error);

@@ -32,7 +32,7 @@ const storage = multer.diskStorage({
 
 const upload = multer({
   storage: storage,
-  limits: { fileSize: 2 * 1024 * 1024 }, // 2MB limit
+  limits: { fileSize: 5 * 1024 * 1024 }, // 5MB limit
   fileFilter: (req, file, cb) => {
     if (file.mimetype.startsWith("image/")) {
       cb(null, true);
@@ -78,7 +78,7 @@ router.post(
 
       // Cari user aktif + data karyawan (departemen/cabang/posisi)
       const user = await dbHelpers.queryOne(
-        `SELECT u.*, e.department_id, e.branch_id, e.position_id, e.picture as profile_picture 
+        `SELECT u.*, e.department_id, e.branch_id, e.position_id, COALESCE(u.profile_picture, e.picture) as profile_picture 
          FROM users u
          LEFT JOIN employees e ON (e.user_id = u.id OR e.nik = u.username) AND e.deleted_at IS NULL
          WHERE u.username = ? AND u.is_active = TRUE`,
@@ -220,7 +220,7 @@ router.post("/verify", async (req, res) => {
 
     // Pastikan user masih aktif + ambil data karyawan
     const user = await dbHelpers.queryOne(
-      `SELECT u.*, e.department_id, e.branch_id, e.position_id, e.picture as profile_picture 
+      `SELECT u.*, e.department_id, e.branch_id, e.position_id, COALESCE(u.profile_picture, e.picture) as profile_picture 
        FROM users u 
        LEFT JOIN employees e ON (e.user_id = u.id OR e.nik = u.username) AND e.deleted_at IS NULL
        WHERE u.id = ? AND u.is_active = TRUE`,
@@ -331,6 +331,9 @@ router.put(
       let picturePath = null;
       if (req.file) {
         picturePath = `/uploads/employees/${req.file.filename}`;
+        console.log("📸 New profile picture uploaded:", picturePath);
+      } else {
+        console.log("ℹ️ No new picture uploaded");
       }
 
       const pool = await dbHelpers.getPool();
@@ -389,6 +392,11 @@ router.put(
           userValues.push(phone);
         }
 
+        if (picturePath) {
+          userUpdates.push("profile_picture = ?");
+          userValues.push(picturePath);
+        }
+
         if (password && password.trim() !== "") {
           const hashed = bcrypt.hashSync(password, 10);
           userUpdates.push("password = ?");
@@ -397,10 +405,16 @@ router.put(
 
         if (userUpdates.length > 0) {
           userValues.push(userId);
-          await connection.query(
+          const [userResult] = await connection.query(
             `UPDATE users SET ${userUpdates.join(", ")} WHERE id = ?`,
             userValues,
           );
+          console.log(
+            "✅ User table updated, affectedRows:",
+            userResult.affectedRows,
+          );
+        } else {
+          console.log("ℹ️ No user fields to update");
         }
 
         await connection.commit();

@@ -688,11 +688,49 @@ export const uploadAttendanceCapture = async (req, res) => {
 
 export const getAttendanceLogs = async (req, res) => {
   try {
+    const { startDate, endDate, page = 1, limit = 10, search = "" } = req.query;
+    const offset = (page - 1) * limit;
     const pool = getPool();
-    const [rows] = await pool.query(
-      "SELECT * FROM attendance_log ORDER BY created_at DESC LIMIT 100",
-    );
-    res.json(rows);
+
+    let query = "SELECT * FROM attendance_log";
+    let countQuery = "SELECT COUNT(*) as total FROM attendance_log";
+    let whereClauses = [];
+    let params = [];
+
+    if (startDate && endDate) {
+      whereClauses.push("attendance_date BETWEEN ? AND ?");
+      params.push(startDate, endDate);
+    }
+
+    if (search) {
+      whereClauses.push(
+        "(full_name LIKE ? OR nik LIKE ? OR rfid_number LIKE ?)",
+      );
+      const searchVal = `%${search}%`;
+      params.push(searchVal, searchVal, searchVal);
+    }
+
+    const whereClause =
+      whereClauses.length > 0 ? ` WHERE ${whereClauses.join(" AND ")}` : "";
+
+    query += whereClause + " ORDER BY created_at DESC LIMIT ? OFFSET ?";
+    countQuery += whereClause;
+
+    const [rows] = await pool.query(query, [
+      ...params,
+      parseInt(limit),
+      parseInt(offset),
+    ]);
+    const [countRows] = await pool.query(countQuery, params);
+
+    res.json({
+      data: {
+        logs: rows,
+        total: countRows[0].total,
+        page: parseInt(page),
+        limit: parseInt(limit),
+      },
+    });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }

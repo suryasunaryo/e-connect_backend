@@ -21,6 +21,7 @@ import userRoleRoutes from "./routes/userRoleRoutes.js";
 import { authenticateToken } from "./middleware/auth.js";
 import newsRoutes from "./routes/newsRoutes.js";
 import portalSettingsRoutes from "./routes/portalSettingsRoutes.js";
+import employeeSetupRoutes from "./routes/employeeSetupRoutes.js";
 
 // Load environment variables
 dotenv.config();
@@ -88,6 +89,7 @@ app.use(
   calendarEventTypeRoutes,
 );
 app.use("/api/portal-settings", authenticateToken, portalSettingsRoutes);
+app.use("/api/employee-batch-setup", authenticateToken, employeeSetupRoutes);
 app.use("/api", apiRoutes);
 
 app.get("/", (req, res) => {
