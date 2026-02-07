@@ -405,6 +405,31 @@ const createTablesIfNeeded = async (pool) => {
       console.log("✅ news_comments table created successfully");
     }
 
+    // Check and create attendance_log table
+    const [attendanceLogTable] = await connection.execute(
+      "SELECT COUNT(*) as count FROM information_schema.tables WHERE table_schema = ? AND table_name = 'attendance_log'",
+      [dbConfig.database],
+    );
+
+    if (attendanceLogTable[0].count === 0) {
+      console.log("📋 Creating attendance_log table...");
+      await connection.execute(`
+        CREATE TABLE attendance_log (
+          id INT AUTO_INCREMENT PRIMARY KEY,
+          nik VARCHAR(50) NOT NULL,
+          full_name VARCHAR(100),
+          rfid_number VARCHAR(50),
+          picture VARCHAR(255),
+          attendance_date DATE,
+          attendance_time TIME,
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+          INDEX idx_nik (nik),
+          INDEX idx_date (attendance_date)
+        )
+      `);
+      console.log("✅ attendance_log table created successfully");
+    }
+
     // ---------------------------------------------------------
     // MIGRATION: Ensure columns in calendar_event_types
     // ---------------------------------------------------------

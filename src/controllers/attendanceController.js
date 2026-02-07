@@ -613,3 +613,101 @@ export const deleteShiftRule = async (req, res) => {
     res.status(500).json({ error: error.message });
   }
 };
+// =======================================================
+// 6. ATTENDANCE CAPTURE
+// =======================================================
+export const uploadAttendanceCapture = async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ error: "No file uploaded" });
+    }
+
+    const { nik } = req.body;
+    // Construct relative path based on the file destination
+    // req.file.destination gives absolute path, we want relative for DB/response
+    // e.g. /uploads/absensi/07022026/12345/absensi-12345-07022026.jpg
+
+    // We can extract relative path starting from 'uploads'
+    const relativePath = req.file.path.split("uploads")[1];
+    const filePath = `/uploads${relativePath.replace(/\\/g, "/")}`; // Ensure forward slashes for URL
+
+    // Optional: Log to activity or database if needed
+    // Insert into attendance_log
+    const pool = getPool();
+
+    // Get employee details for the log
+    // We assume NIK is unique and exists since they just scanned
+    const [empRows] = await pool.query(
+      "SELECT full_name, rfid_number FROM employees WHERE nik = ?",
+      [nik],
+    );
+    const emp = empRows[0] || {};
+
+    const now = new Date();
+    const dateStr = now.toISOString().split("T")[0]; // YYYY-MM-DD
+    const timeStr = now.toTimeString().split(" ")[0]; // HH:MM:SS
+
+    const [result] = await pool.query(
+      "INSERT INTO attendance_log (nik, full_name, rfid_number, picture, attendance_date, attendance_time) VALUES (?, ?, ?, ?, ?, ?)",
+      [
+        nik,
+        emp.full_name || "Unknown",
+        emp.rfid_number || "Unknown",
+        filePath,
+        dateStr,
+        timeStr,
+      ],
+    );
+
+    const newLog = {
+      id: result.insertId,
+      nik,
+      full_name: emp.full_name || "Unknown",
+      rfid_number: emp.rfid_number || "Unknown",
+      picture: filePath,
+      attendance_date: dateStr,
+      attendance_time: timeStr,
+      created_at: now.toISOString(),
+    };
+
+    // Emit socket event for real-time updates
+    emitDataChange("attendance_logs", "create", newLog);
+
+    console.log(`📸 Attendance capture received and logged for NIK: ${nik}`);
+
+    res.json({
+      success: true,
+      message: "Attendance photo uploaded and logged successfully",
+      file_path: filePath,
+    });
+  } catch (error) {
+    console.error("Error uploading attendance capture:", error);
+    res.status(500).json({ error: error.message });
+  }
+};
+
+export const getAttendanceLogs = async (req, res) => {
+  try {
+    const pool = getPool();
+    const [rows] = await pool.query(
+      "SELECT * FROM attendance_log ORDER BY created_at DESC LIMIT 100",
+    );
+    res.json(rows);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+};
+
+export const deleteAttendanceLog = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const pool = getPool();
+    await pool.query("DELETE FROM attendance_log WHERE id = ?", [id]);
+
+    // Note: We might want to delete the actual file too, but keeping it simple for now or strictly following instructions which didn't specify file deletion logic on log delete.
+
+    res.json({ message: "Attendance log deleted successfully" });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+};
