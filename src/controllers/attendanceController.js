@@ -145,37 +145,79 @@ export const getEmployeeShifts = async (req, res) => {
     const [rows] = await pool.query(`
       SELECT aes.*, e.full_name, s.shift_name 
       FROM attendance_employee_shift aes
-      LEFT JOIN employees e ON aes.employee_id = e.id OR aes.employee_id = e.nik
+      LEFT JOIN employees e ON aes.target_type = 'user' AND (aes.target_value = e.id OR aes.target_value = e.nik)
       LEFT JOIN attendance_shifts s ON aes.shift_id = s.shift_id
       WHERE aes.is_deleted IS NULL OR aes.is_deleted = 0
     `);
     res.json(rows);
   } catch (error) {
+    console.error("❌ Error in getEmployeeShifts:", error);
+    console.error("Error stack:", error.stack);
     res.status(500).json({ error: error.message });
   }
 };
 
 export const createEmployeeShift = async (req, res) => {
   try {
-    const { employee_id, shift_id, start_date, end_date } = req.body;
+    console.log("📝 Creating employee shift with data:", req.body);
+    const {
+      target_type,
+      target_value,
+      rule_type,
+      shift_id,
+      start_date,
+      end_date,
+    } = req.body;
+
+    // Validate required fields
+    // Note: target_value can be empty when target_type is 'all'
+    if (!target_type || !rule_type || !start_date) {
+      console.error("❌ Missing required fields");
+      return res.status(400).json({
+        error: "Missing required fields: target_type, rule_type, start_date",
+      });
+    }
+
+    // Validate target_value is provided for non-'all' types
+    if (target_type !== "all" && !target_value) {
+      console.error(
+        "❌ target_value is required when target_type is not 'all'",
+      );
+      return res.status(400).json({
+        error: "target_value is required when target_type is not 'all'",
+      });
+    }
+
     const pool = getPool();
     const [result] = await pool.query(
-      "INSERT INTO attendance_employee_shift (employee_id, shift_id, start_date, end_date) VALUES (?, ?, ?, ?)",
-      [employee_id, shift_id, start_date, end_date],
+      "INSERT INTO attendance_employee_shift (target_type, target_value, rule_type, shift_id, start_date, end_date) VALUES (?, ?, ?, ?, ?, ?)",
+      [
+        target_type || "user",
+        target_type === "all" ? "all" : target_value, // Use 'all' as value when type is 'all'
+        rule_type || "shift",
+        shift_id || null,
+        start_date,
+        end_date || null,
+      ],
     );
+
+    console.log("✅ Employee shift created successfully, ID:", result.insertId);
 
     await logActivity(
       req,
       "CREATE",
       "attendance_employee_shift",
       result.insertId,
-      `Assigned shift ${shift_id} to employee ${employee_id}`,
+      `Assigned ${rule_type} ${shift_id || ""} to ${target_type}: ${target_value}`,
       null,
       req.body,
     );
 
     res.status(201).json({ id: result.insertId, ...req.body });
   } catch (error) {
+    console.error("❌ Error in createEmployeeShift:", error);
+    console.error("Error stack:", error.stack);
+    console.error("Request body:", req.body);
     res.status(500).json({ error: error.message });
   }
 };
@@ -183,7 +225,14 @@ export const createEmployeeShift = async (req, res) => {
 export const updateEmployeeShift = async (req, res) => {
   try {
     const { id } = req.params;
-    const { employee_id, shift_id, start_date, end_date } = req.body;
+    const {
+      target_type,
+      target_value,
+      rule_type,
+      shift_id,
+      start_date,
+      end_date,
+    } = req.body;
     const pool = getPool();
 
     const [oldRows] = await pool.query(
@@ -193,8 +242,16 @@ export const updateEmployeeShift = async (req, res) => {
     const oldValues = oldRows[0];
 
     await pool.query(
-      "UPDATE attendance_employee_shift SET employee_id = ?, shift_id = ?, start_date = ?, end_date = ? WHERE id = ?",
-      [employee_id, shift_id, start_date, end_date, id],
+      "UPDATE attendance_employee_shift SET target_type = ?, target_value = ?, rule_type = ?, shift_id = ?, start_date = ?, end_date = ? WHERE id = ?",
+      [
+        target_type || "user",
+        target_type === "all" ? "all" : target_value, // Use 'all' as value when type is 'all'
+        rule_type || "shift",
+        shift_id || null,
+        start_date,
+        end_date || null,
+        id,
+      ],
     );
 
     await logActivity(
@@ -209,6 +266,8 @@ export const updateEmployeeShift = async (req, res) => {
 
     res.json({ message: "Employee shift updated successfully" });
   } catch (error) {
+    console.error("❌ Error in updateEmployeeShift:", error);
+    console.error("Error stack:", error.stack);
     res.status(500).json({ error: error.message });
   }
 };
@@ -374,11 +433,22 @@ export const createShift = async (req, res) => {
       end_time,
       break_start,
       break_end,
+      work_days,
+      breaks,
     } = req.body;
     const pool = getPool();
     const [result] = await pool.query(
-      "INSERT INTO attendance_shifts (shift_code, shift_name, start_time, end_time, break_start, break_end) VALUES (?, ?, ?, ?, ?, ?)",
-      [shift_code, shift_name, start_time, end_time, break_start, break_end],
+      "INSERT INTO attendance_shifts (shift_code, shift_name, start_time, end_time, break_start, break_end, work_days, breaks) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+      [
+        shift_code,
+        shift_name,
+        start_time,
+        end_time,
+        break_start,
+        break_end,
+        JSON.stringify(work_days || []),
+        JSON.stringify(breaks || []),
+      ],
     );
 
     await logActivity(
@@ -407,6 +477,8 @@ export const updateShift = async (req, res) => {
       end_time,
       break_start,
       break_end,
+      work_days,
+      breaks,
     } = req.body;
     const pool = getPool();
 
@@ -417,7 +489,7 @@ export const updateShift = async (req, res) => {
     const oldValues = oldRows[0];
 
     await pool.query(
-      "UPDATE attendance_shifts SET shift_code = ?, shift_name = ?, start_time = ?, end_time = ?, break_start = ?, break_end = ? WHERE shift_id = ?",
+      "UPDATE attendance_shifts SET shift_code = ?, shift_name = ?, start_time = ?, end_time = ?, break_start = ?, break_end = ?, work_days = ?, breaks = ? WHERE shift_id = ?",
       [
         shift_code,
         shift_name,
@@ -425,6 +497,8 @@ export const updateShift = async (req, res) => {
         end_time,
         break_start,
         break_end,
+        JSON.stringify(work_days || []),
+        JSON.stringify(breaks || []),
         id,
       ],
     );
@@ -484,7 +558,7 @@ export const getShiftRules = async (req, res) => {
   try {
     const pool = getPool();
     const [rows] = await pool.query(`
-      SELECT asr.*, s.shift_name 
+      SELECT asr.*, s.shift_name, s.shift_code
       FROM attendance_shift_rules asr
       JOIN attendance_shifts s ON asr.shift_id = s.shift_id
       WHERE asr.is_deleted IS NULL OR asr.is_deleted = 0
@@ -513,8 +587,8 @@ export const createShiftRule = async (req, res) => {
         req.body.required_check_in,
         req.body.required_check_out,
         req.body.incomplete_checkclock_rule,
-        req.body.grace_period_start,
-        req.body.grace_period_end,
+        req.body.grace_period_start || null,
+        req.body.grace_period_end || null,
       ],
     );
 
@@ -560,8 +634,8 @@ export const updateShiftRule = async (req, res) => {
         req.body.required_check_in,
         req.body.required_check_out,
         req.body.incomplete_checkclock_rule,
-        req.body.grace_period_start,
-        req.body.grace_period_end,
+        req.body.grace_period_start || null,
+        req.body.grace_period_end || null,
         id,
       ],
     );

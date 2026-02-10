@@ -742,6 +742,54 @@ const createTablesIfNeeded = async (pool) => {
         migErr.message,
       );
     }
+
+    // 🚀 Migration for Attendance Employee Shift: add target_type, target_value, and rule_type
+    try {
+      const [cols] = await connection.execute(
+        "SHOW COLUMNS FROM attendance_employee_shift",
+      );
+      const columnNames = cols.map((c) => c.Field);
+
+      if (!columnNames.includes("target_type")) {
+        // Check if employee_id column needs to be made nullable
+        const [employeeIdCol] = await connection.execute(
+          "SELECT COLUMN_NAME, IS_NULLABLE FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = ? AND TABLE_NAME = 'attendance_employee_shift' AND COLUMN_NAME = 'employee_id'",
+          [dbConfig.database],
+        );
+
+        if (employeeIdCol.length > 0 && employeeIdCol[0].IS_NULLABLE === "NO") {
+          console.log("🔧 Making employee_id column nullable...");
+          await connection.execute(
+            "ALTER TABLE attendance_employee_shift MODIFY COLUMN employee_id INT NULL DEFAULT NULL",
+          );
+          console.log("✅ employee_id is now nullable");
+        }
+        await connection.execute(
+          "ALTER TABLE attendance_employee_shift ADD COLUMN target_type VARCHAR(50) DEFAULT 'user' AFTER employee_id",
+        );
+      }
+      if (!columnNames.includes("target_value")) {
+        console.log("Adding target_value to attendance_employee_shift...");
+        await connection.execute(
+          "ALTER TABLE attendance_employee_shift ADD COLUMN target_value TEXT NULL AFTER target_type",
+        );
+        // Initialize target_value with employee_id for existing rows
+        await connection.execute(
+          "UPDATE attendance_employee_shift SET target_value = employee_id WHERE target_value IS NULL",
+        );
+      }
+      if (!columnNames.includes("rule_type")) {
+        console.log("Adding rule_type to attendance_employee_shift...");
+        await connection.execute(
+          "ALTER TABLE attendance_employee_shift ADD COLUMN rule_type VARCHAR(20) DEFAULT 'shift' AFTER target_value",
+        );
+      }
+    } catch (migErr) {
+      console.warn(
+        "Migration warning (attendance_employee_shift columns):",
+        migErr.message,
+      );
+    }
   } catch (error) {
     console.error("❌ Error creating tables:", error);
     // Don't throw error to allow server to start even if table creation fails
