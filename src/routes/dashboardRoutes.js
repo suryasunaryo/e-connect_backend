@@ -6,7 +6,11 @@ import {
   updateCardPreference,
   bulkUpdateCardPreferences,
   resetToDefaults,
+  getWhosOnline,
+  getCalendarEvents,
+  updateGlobalCardDefaults,
 } from "../controllers/dashboardController.js";
+import { requireAdmin } from "../middleware/auth.js";
 
 const router = express.Router();
 
@@ -24,5 +28,19 @@ router.put("/preferences", authenticateToken, bulkUpdateCardPreferences);
 
 // POST - Reset to default preferences
 router.post("/preferences/reset", authenticateToken, resetToDefaults);
+
+// POST - Update global default dashboard layout (Admin only)
+router.post(
+  "/cards/defaults",
+  authenticateToken,
+  requireAdmin,
+  updateGlobalCardDefaults,
+);
+
+// GET - Get who's online (currently active users)
+router.get("/whos-online", authenticateToken, getWhosOnline);
+
+// GET - Get calendar events for widget
+router.get("/calendar-events", authenticateToken, getCalendarEvents);
 
 export default router;

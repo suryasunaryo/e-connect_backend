@@ -5,7 +5,7 @@ import path from "path";
 import os from "os";
 import { fileURLToPath } from "url";
 import dotenv from "dotenv";
-import { initSocket } from "./config/socket.js";
+import { initSocket, getIo } from "./config/socket.js";
 import apiRoutes from "./routes/index.js";
 import { initDatabase, getPool } from "./config/database.js";
 import userRoutes from "./routes/users.js";
@@ -121,6 +121,44 @@ const getLocalIp = () => {
 const localIp = getLocalIp();
 
 // =======================================================
+// 🧹 INACTIVITY CLEANUP JOB
+// Sets is_online = 0 for users inactive for > 10 minutes
+// =======================================================
+const initInactivityCleanup = () => {
+  const CLEANUP_INTERVAL = 60 * 1000; // 1 menit
+  const INACTIVITY_LIMIT_MINUTES = 10;
+
+  setInterval(async () => {
+    try {
+      const pool = getPool();
+      const [result] = await pool.query(
+        `UPDATE users 
+         SET is_online = 0 
+         WHERE is_online = 1 
+         AND last_activity < DATE_SUB(NOW(), INTERVAL ? MINUTE)`,
+        [INACTIVITY_LIMIT_MINUTES],
+      );
+
+      if (result.affectedRows > 0) {
+        console.log(
+          `🧹 Inactivity Cleanup: Set ${result.affectedRows} users to offline`,
+        );
+        // Emitting socket event for real-time dashboard updates
+        const io = getIo();
+        if (io) {
+          io.emit("user:status_changed", {
+            type: "cleanup",
+            timestamp: new Date(),
+          });
+        }
+      }
+    } catch (error) {
+      console.error("❌ Inactivity Cleanup Error:", error);
+    }
+  }, CLEANUP_INTERVAL);
+};
+
+// =======================================================
 // 🧠 START SERVER
 // =======================================================
 const startServer = async () => {
@@ -129,6 +167,7 @@ const startServer = async () => {
       throw new Error("JWT_SECRET is not defined in environment variables");
     }
     await initDatabase();
+    initInactivityCleanup(); // Start cleanup job
     server.listen(PORT, () => {
       console.log("🚀 Server started successfully!");
       console.log(`📍 Local:   http://localhost:${PORT}`);
