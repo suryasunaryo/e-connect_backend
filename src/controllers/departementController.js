@@ -135,8 +135,8 @@ export const updateDepartement = async (req, res) => {
         branch_id || existing.branch_id,
         dept_name || existing.dept_name,
         dept_code || existing.dept_code,
-        parent_id !== undefined ? parent_id : existing.parent_id,
-        location !== undefined ? location : existing.location,
+        parent_id === undefined ? existing.parent_id : parent_id || null,
+        location === undefined ? existing.location : location || null,
         id,
       ],
     );
@@ -193,5 +193,114 @@ export const deleteDepartement = async (req, res) => {
   } catch (error) {
     console.error("❌ Error deleting department:", error);
     res.status(500).json({ error: "Failed to delete department" });
+  }
+};
+
+/**
+ * GET DEPARTMENT TREE
+ * Fetches all branches and their nested departments recursively
+ */
+export const getDepartementTree = async (req, res) => {
+  try {
+    const branches = await dbHelpers.query(
+      "SELECT id, branch_name FROM branches WHERE deleted_at IS NULL ORDER BY branch_name ASC",
+    );
+
+    const allDepartments = await dbHelpers.query(`
+      SELECT d.*, b.branch_name 
+      FROM departments d
+      LEFT JOIN branches b ON d.branch_id = b.id
+      WHERE d.deleted_at IS NULL
+      ORDER BY d.location ASC, d.dept_name ASC
+    `);
+
+    const buildTree = (parentId, branchId) => {
+      return allDepartments
+        .filter((d) => d.parent_id === parentId && d.branch_id === branchId)
+        .map((d) => ({
+          ...d,
+          children: buildTree(d.id, branchId),
+        }));
+    };
+
+    const tree = branches.map((branch) => ({
+      id: `branch-${branch.id}`,
+      name: branch.branch_name,
+      isBranch: true,
+      branch_id: branch.id,
+      children: buildTree(null, branch.id),
+    }));
+
+    res.json(tree);
+  } catch (error) {
+    console.error("❌ Error fetching department tree:", error);
+    res.status(500).json({ error: "Failed to fetch department tree" });
+  }
+};
+
+/**
+ * MOVE DEPARTMENT (DRAG & DROP)
+ */
+export const moveDepartement = async (req, res) => {
+  try {
+    const { id, parent_id, new_location, branch_id } = req.body;
+
+    if (!id) {
+      return res.status(400).json({ error: "Department ID is required" });
+    }
+
+    // 1. Fetch current moved item to check its branch
+    const movedItem = await dbHelpers.queryOne(
+      "SELECT branch_id FROM departments WHERE id = ?",
+      [id],
+    );
+
+    if (!movedItem) {
+      return res.status(404).json({ error: "Department not found" });
+    }
+
+    // Prevent cross-branch moves
+    if (branch_id && movedItem.branch_id != branch_id) {
+      return res
+        .status(400)
+        .json({ error: "Cannot move department to a different branch" });
+    }
+
+    // 2. Update the moved department first (Primary Update)
+    await dbHelpers.execute(
+      "UPDATE departments SET parent_id = ?, location = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+      [parent_id || null, new_location, id],
+    );
+
+    // 3. Sync/Reorder siblings
+    // Fetch all siblings of the *new* parent (including the moved item itself)
+    // Ordered by location ASC
+    const siblings = await dbHelpers.query(
+      "SELECT id, location FROM departments WHERE parent_id <=> ? AND branch_id = ? AND deleted_at IS NULL ORDER BY location ASC, updated_at DESC",
+      [parent_id || null, movedItem.branch_id],
+    );
+
+    let counter = 1;
+    const targetLocation = parseInt(new_location);
+
+    for (const sibling of siblings) {
+      if (sibling.id === parseInt(id)) {
+        // The moved item is already at targetLocation
+      } else {
+        if (counter === targetLocation) {
+          counter++;
+        }
+        await dbHelpers.execute(
+          "UPDATE departments SET location = ? WHERE id = ?",
+          [counter, sibling.id],
+        );
+        counter++;
+      }
+    }
+
+    res.json({ message: "Department moved and reordered successfully" });
+  } catch (error) {
+    console.error("❌ Error moving department:", error);
+    res.status(500).json({ error: "Failed to move department" });
   }
 };

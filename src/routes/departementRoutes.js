@@ -5,6 +5,8 @@ import {
   createDepartement,
   updateDepartement,
   deleteDepartement,
+  getDepartementTree,
+  moveDepartement,
 } from "../controllers/departementController.js";
 import { activityLogger } from "../middleware/activityLogger.js";
 
@@ -13,32 +15,46 @@ const router = express.Router();
 // GET all departments
 router.get("/", getAllDepartements);
 
+// GET department tree
+router.get(
+  "/tree",
+  activityLogger.logModuleActivity("departments", "READ"),
+  getDepartementTree,
+);
+
+// MOVE department (drag & drop)
+router.post(
+  "/move",
+  activityLogger.logModuleActivity("departments", "UPDATE"),
+  moveDepartement,
+);
+
 // GET department by ID
 router.get(
   "/:id",
   activityLogger.logModuleActivity("departments", "READ"),
-  getDepartementById
+  getDepartementById,
 );
 
 // CREATE new department
 router.post(
   "/",
   activityLogger.logModuleActivity("departments", "CREATE"),
-  createDepartement
+  createDepartement,
 );
 
 // UPDATE department
 router.put(
   "/:id",
   activityLogger.logModuleActivity("departments", "UPDATE"),
-  updateDepartement
+  updateDepartement,
 );
 
 // DELETE department (soft delete)
 router.delete(
   "/:id",
   activityLogger.logModuleActivity("departments", "DELETE"),
-  deleteDepartement
+  deleteDepartement,
 );
 
 export default router;
