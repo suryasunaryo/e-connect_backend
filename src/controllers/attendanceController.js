@@ -143,7 +143,7 @@ export const getEmployeeShifts = async (req, res) => {
   try {
     const pool = getPool();
     const [rows] = await pool.query(`
-      SELECT aes.*, e.full_name, s.shift_name 
+      SELECT aes.*, e.full_name, s.shift_name, s.shift_code 
       FROM attendance_employee_shift aes
       LEFT JOIN employees e ON aes.target_type = 'user' AND (aes.target_value = e.id OR aes.target_value = e.nik)
       LEFT JOIN attendance_shifts s ON aes.shift_id = s.shift_id
@@ -189,31 +189,51 @@ export const createEmployeeShift = async (req, res) => {
     }
 
     const pool = getPool();
-    const [result] = await pool.query(
-      "INSERT INTO attendance_employee_shift (target_type, target_value, rule_type, shift_id, start_date, end_date) VALUES (?, ?, ?, ?, ?, ?)",
-      [
-        target_type || "user",
-        target_type === "all" ? "all" : target_value, // Use 'all' as value when type is 'all'
-        rule_type || "shift",
-        shift_id || null,
-        start_date,
-        end_date || null,
-      ],
-    );
+    const shiftIds =
+      rule_type === "shift" && shift_id
+        ? String(shift_id)
+            .split(",")
+            .map((id) => id.trim())
+            .filter((id) => id)
+        : [null];
 
-    console.log("✅ Employee shift created successfully, ID:", result.insertId);
+    const createdIds = [];
+    for (const sid of shiftIds) {
+      const [result] = await pool.query(
+        "INSERT INTO attendance_employee_shift (target_type, target_value, rule_type, shift_id, start_date, end_date) VALUES (?, ?, ?, ?, ?, ?)",
+        [
+          target_type || "user",
+          target_type === "all" ? "all" : target_value,
+          rule_type || "shift",
+          sid,
+          start_date,
+          end_date || null,
+        ],
+      );
+      createdIds.push(result.insertId);
+    }
+
+    console.log("✅ Employee shift created successfully, ID:", createdIds);
 
     await logActivity(
       req,
       "CREATE",
       "attendance_employee_shift",
-      result.insertId,
-      `Assigned ${rule_type} ${shift_id || ""} to ${target_type}: ${target_value}`,
+      createdIds[0],
+      `Assigned ${rule_type} shifts ${shift_id || ""} to ${target_type}: ${target_value}`,
       null,
       req.body,
     );
 
-    res.status(201).json({ id: result.insertId, ...req.body });
+    // Sync back to employee cache if target is user
+    if (target_type === "user") {
+      const targetIds = target_value.split(",");
+      for (const tid of targetIds) {
+        await updateEmployeeShiftCache(tid.trim());
+      }
+    }
+
+    res.status(201).json({ ids: createdIds, ...req.body });
   } catch (error) {
     console.error("❌ Error in createEmployeeShift:", error);
     console.error("Error stack:", error.stack);
@@ -234,6 +254,13 @@ export const updateEmployeeShift = async (req, res) => {
       end_date,
     } = req.body;
     const pool = getPool();
+    const shiftIds =
+      rule_type === "shift" && shift_id
+        ? String(shift_id)
+            .split(",")
+            .map((id) => id.trim())
+            .filter((id) => id)
+        : [null];
 
     const [oldRows] = await pool.query(
       "SELECT * FROM attendance_employee_shift WHERE id = ?",
@@ -241,30 +268,67 @@ export const updateEmployeeShift = async (req, res) => {
     );
     const oldValues = oldRows[0];
 
+    // Update the existing record with the FIRST shift ID
     await pool.query(
       "UPDATE attendance_employee_shift SET target_type = ?, target_value = ?, rule_type = ?, shift_id = ?, start_date = ?, end_date = ? WHERE id = ?",
       [
         target_type || "user",
-        target_type === "all" ? "all" : target_value, // Use 'all' as value when type is 'all'
+        target_type === "all" ? "all" : target_value,
         rule_type || "shift",
-        shift_id || null,
+        shiftIds[0],
         start_date,
         end_date || null,
         id,
       ],
     );
 
+    // If there are MORE shift IDs, create NEW records for them
+    const createdIds = [id];
+    for (let i = 1; i < shiftIds.length; i++) {
+      const [result] = await pool.query(
+        "INSERT INTO attendance_employee_shift (target_type, target_value, rule_type, shift_id, start_date, end_date) VALUES (?, ?, ?, ?, ?, ?)",
+        [
+          target_type || "user",
+          target_type === "all" ? "all" : target_value,
+          rule_type || "shift",
+          shiftIds[i],
+          start_date,
+          end_date || null,
+        ],
+      );
+      createdIds.push(result.insertId);
+    }
+
     await logActivity(
       req,
       "UPDATE",
       "attendance_employee_shift",
       id,
-      `Updated employee shift ID: ${id}`,
+      `Updated ${rule_type} assignment. Shifts: ${shift_id || ""}`,
       oldValues,
       req.body,
     );
 
-    res.json({ message: "Employee shift updated successfully" });
+    // Sync back to employee cache if target is user or was user
+    if (
+      target_type === "user" ||
+      (oldValues && oldValues.target_type === "user")
+    ) {
+      const allTargetIds = new Set();
+      if (target_type === "user")
+        target_value.split(",").forEach((v) => allTargetIds.add(v.trim()));
+      if (oldValues && oldValues.target_type === "user")
+        allTargetIds.add(String(oldValues.target_value));
+
+      for (const tid of allTargetIds) {
+        await updateEmployeeShiftCache(tid);
+      }
+    }
+
+    res.json({
+      message: "Employee shift(s) updated successfully",
+      ids: createdIds,
+    });
   } catch (error) {
     console.error("❌ Error in updateEmployeeShift:", error);
     console.error("Error stack:", error.stack);
@@ -297,6 +361,11 @@ export const deleteEmployeeShift = async (req, res) => {
       oldValues,
       null,
     );
+
+    // Sync back to employee cache if target was user
+    if (oldValues.target_type === "user") {
+      await updateEmployeeShiftCache(oldValues.target_value);
+    }
 
     res.json({ message: "Employee shift deleted successfully" });
   } catch (error) {
@@ -823,3 +892,34 @@ export const deleteAttendanceLog = async (req, res) => {
     res.status(500).json({ error: error.message });
   }
 };
+
+/**
+ * 🔄 Helper to update employees.employee_shift_id cache
+ */
+async function updateEmployeeShiftCache(employeeId) {
+  try {
+    const pool = getPool();
+    const [rows] = await pool.query(
+      "SELECT shift_id FROM attendance_employee_shift WHERE target_type = 'user' AND target_value = ? AND (is_deleted IS NULL OR is_deleted = 0)",
+      [employeeId],
+    );
+
+    const shiftIds = rows
+      .map((r) => r.shift_id)
+      .filter((id) => id)
+      .join(",");
+
+    await pool.query(
+      "UPDATE employees SET employee_shift_id = ? WHERE id = ?",
+      [shiftIds || null, employeeId],
+    );
+    console.log(
+      `✅ Synced employee_shift_id cache for employee ${employeeId}: ${shiftIds}`,
+    );
+  } catch (err) {
+    console.error(
+      `❌ Failed to sync employee_shift_id cache for ${employeeId}:`,
+      err,
+    );
+  }
+}

@@ -11,20 +11,24 @@ export const getAllEmployees = async (req, res) => {
     const employees = await dbHelpers.query(`
       SELECT 
         e.*, 
-        d.dept_name as department_name,
+        GROUP_CONCAT(DISTINCT d.dept_name SEPARATOR ', ') as department_name,
         p.position_name as position_name,
         t.title_name as title_name,
         b.branch_name as branch_name,
         l.office_name as location_name,
-        s.shift_name as shift_name
+        IF(FIND_IN_SET('setting', e.employee_shift_id), 
+           CONCAT_WS(', ', 'Global Setting', GROUP_CONCAT(DISTINCT s.shift_name SEPARATOR ', ')), 
+           GROUP_CONCAT(DISTINCT s.shift_name SEPARATOR ', ')
+        ) as shift_name
       FROM employees e 
-      LEFT JOIN departments d ON e.department_id = d.id 
+      LEFT JOIN departments d ON FIND_IN_SET(d.id, e.department_id)
       LEFT JOIN positions p ON e.position_id = p.id
       LEFT JOIN titles t ON e.title_id = t.id
       LEFT JOIN branches b ON e.branch_id = b.id
       LEFT JOIN location l ON e.location_id = l.id
-      LEFT JOIN attendance_shifts s ON e.employee_shift_id = s.shift_id
+      LEFT JOIN attendance_shifts s ON FIND_IN_SET(s.shift_id, e.employee_shift_id)
       WHERE e.deleted_at IS NULL 
+      GROUP BY e.id
       ORDER BY e.full_name ASC
     `);
     res.json(employees);
@@ -44,20 +48,24 @@ export const getEmployeeById = async (req, res) => {
       `
       SELECT 
         e.*, 
-        d.dept_name as department_name,
+        GROUP_CONCAT(DISTINCT d.dept_name SEPARATOR ', ') as department_name,
         p.position_name,
         t.title_name,
         b.branch_name,
         l.office_name as location_name,
-        s.shift_name as shift_name
+        IF(FIND_IN_SET('setting', e.employee_shift_id), 
+           CONCAT_WS(', ', 'Global Setting', GROUP_CONCAT(DISTINCT s.shift_name SEPARATOR ', ')), 
+           GROUP_CONCAT(DISTINCT s.shift_name SEPARATOR ', ')
+        ) as shift_name
       FROM employees e 
-      LEFT JOIN departments d ON e.department_id = d.id 
+      LEFT JOIN departments d ON FIND_IN_SET(d.id, e.department_id)
       LEFT JOIN positions p ON e.position_id = p.id
       LEFT JOIN titles t ON e.title_id = t.id
       LEFT JOIN branches b ON e.branch_id = b.id
       LEFT JOIN location l ON e.location_id = l.id
-      LEFT JOIN attendance_shifts s ON e.employee_shift_id = s.shift_id
+      LEFT JOIN attendance_shifts s ON FIND_IN_SET(s.shift_id, e.employee_shift_id)
       WHERE e.id = ? AND e.deleted_at IS NULL
+      GROUP BY e.id
     `,
       [id],
     );
@@ -207,8 +215,8 @@ export const createEmployee = async (req, res) => {
         user_id, full_name, picture, nik, barcode, branch_id, department_id, position_id, title_id,
         employee_status, contract_count, join_date, effective_date, end_effective_date, resign_date_rehire,
         religion, gender, marital_status, place_of_birth, date_of_birth, address, phone, office_email,
-        personal_email, npwp, bpjs_tk, bpjs_health, ktp_number, rfid_number
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        personal_email, npwp, bpjs_tk, bpjs_health, ktp_number, rfid_number, employee_shift_id
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         user_id || null,
         full_name,
@@ -239,8 +247,16 @@ export const createEmployee = async (req, res) => {
         bpjs_health || null,
         ktp_number || null,
         rfid_number || null,
+        req.body.employee_shift_id || null,
       ],
     );
+
+    const employeeId = result.insertId;
+
+    // Sync Shift to attendance_employee_shift
+    if (req.body.employee_shift_id) {
+      await syncEmployeeShifts(employeeId, req.body.employee_shift_id);
+    }
 
     const newEmployee = await dbHelpers.queryOne(
       `
@@ -373,7 +389,8 @@ export const updateEmployee = async (req, res) => {
              join_date = ?, effective_date = ?, end_effective_date = ?, resign_date_rehire = ?,
              religion = ?, gender = ?, marital_status = ?, place_of_birth = ?, date_of_birth = ?,
              address = ?, phone = ?, office_email = ?, personal_email = ?, npwp = ?,
-             bpjs_tk = ?, bpjs_health = ?, ktp_number = ?, rfid_number = ?, updated_at = CURRENT_TIMESTAMP 
+             bpjs_tk = ?, bpjs_health = ?, ktp_number = ?, rfid_number = ?, 
+             employee_shift_id = ?, updated_at = CURRENT_TIMESTAMP 
            WHERE id = ?`,
           [
             user_id !== undefined ? user_id : existing.user_id,
@@ -423,6 +440,9 @@ export const updateEmployee = async (req, res) => {
             bpjs_health !== undefined ? bpjs_health : existing.bpjs_health,
             ktp_number !== undefined ? ktp_number : existing.ktp_number,
             rfid_number !== undefined ? rfid_number : existing.rfid_number,
+            req.body.employee_shift_id !== undefined
+              ? req.body.employee_shift_id
+              : existing.employee_shift_id,
             id,
           ],
         );
@@ -435,6 +455,11 @@ export const updateEmployee = async (req, res) => {
 
         await connection.commit();
         connection.release();
+
+        // Sync Shift after commit
+        if (req.body.employee_shift_id !== undefined) {
+          await syncEmployeeShifts(id, req.body.employee_shift_id);
+        }
 
         console.log(
           `✅ Updated employee NIK and username: ${existing.nik} → ${nik}`,
@@ -454,7 +479,8 @@ export const updateEmployee = async (req, res) => {
            join_date = ?, effective_date = ?, end_effective_date = ?, resign_date_rehire = ?,
            religion = ?, gender = ?, marital_status = ?, place_of_birth = ?, date_of_birth = ?,
            address = ?, phone = ?, office_email = ?, personal_email = ?, npwp = ?,
-           bpjs_tk = ?, bpjs_health = ?, ktp_number = ?, rfid_number = ?, updated_at = CURRENT_TIMESTAMP 
+           bpjs_tk = ?, bpjs_health = ?, ktp_number = ?, rfid_number = ?,
+           employee_shift_id = ?, updated_at = CURRENT_TIMESTAMP 
          WHERE id = ?`,
         [
           user_id !== undefined ? user_id : existing.user_id,
@@ -500,9 +526,17 @@ export const updateEmployee = async (req, res) => {
           bpjs_health !== undefined ? bpjs_health : existing.bpjs_health,
           ktp_number !== undefined ? ktp_number : existing.ktp_number,
           rfid_number !== undefined ? rfid_number : existing.rfid_number,
+          req.body.employee_shift_id !== undefined
+            ? req.body.employee_shift_id
+            : existing.employee_shift_id,
           id,
         ],
       );
+
+      // Sync Shift (Normal)
+      if (req.body.employee_shift_id !== undefined) {
+        await syncEmployeeShifts(id, req.body.employee_shift_id);
+      }
     }
 
     const updatedEmployee = await dbHelpers.queryOne(
@@ -845,5 +879,92 @@ export const autoCreateUsers = async (req, res) => {
   } catch (error) {
     console.error("❌ Error auto creating users:", error);
     res.status(500).json({ error: "Failed to auto create users" });
+  }
+};
+
+/**
+ * 🔄 SYNC EMPLOYEE SHIFTS
+ * Syncs employees.employee_shift_id (string) to attendance_employee_shift table
+ */
+export const syncEmployeeShifts = async (employeeId, shiftIdsString) => {
+  try {
+    const shiftIds = shiftIdsString
+      ? shiftIdsString
+          .split(",")
+          .map((id) => id.trim())
+          .filter((id) => id)
+      : [];
+
+    // Get current active shifts for this employee
+    const currentAssignments = await dbHelpers.query(
+      "SELECT id, shift_id FROM attendance_employee_shift WHERE target_type = 'user' AND target_value = ? AND (is_deleted IS NULL OR is_deleted = 0)",
+      [employeeId],
+    );
+
+    const currentShiftIds = currentAssignments.map((a) => String(a.shift_id));
+
+    // 1. Add new assignments
+    for (const sid of shiftIds) {
+      if (!currentShiftIds.includes(String(sid))) {
+        await dbHelpers.execute(
+          "INSERT INTO attendance_employee_shift (target_type, target_value, rule_type, shift_id, start_date) VALUES (?, ?, ?, ?, ?)",
+          [
+            "user",
+            employeeId,
+            "shift",
+            sid,
+            new Date().toISOString().split("T")[0],
+          ],
+        );
+      }
+    }
+
+    // 2. Remove (soft delete) assignments no longer in the list
+    for (const assignment of currentAssignments) {
+      if (!shiftIds.includes(String(assignment.shift_id))) {
+        await dbHelpers.execute(
+          "UPDATE attendance_employee_shift SET is_deleted = 1, deleted_at = NOW() WHERE id = ?",
+          [assignment.id],
+        );
+      }
+    }
+
+    console.log(
+      `✅ Synced shifts for employee ${employeeId}: ${shiftIdsString}`,
+    );
+  } catch (error) {
+    console.error(
+      `❌ Failed to sync shifts for employee ${employeeId}:`,
+      error,
+    );
+  }
+};
+
+/**
+ * 🔄 SYNC EMPLOYEES CACHE FROM ATTENDANCE SHIFT
+ * Re-calculates employee_shift_id for an employee based on attendance_employee_shift table
+ */
+export const syncEmployeeShiftCache = async (employeeId) => {
+  try {
+    const assignments = await dbHelpers.query(
+      "SELECT shift_id FROM attendance_employee_shift WHERE target_type = 'user' AND target_value = ? AND (is_deleted IS NULL OR is_deleted = 0)",
+      [employeeId],
+    );
+
+    const shiftIds = assignments.map((a) => a.shift_id).join(",");
+
+    await dbHelpers.execute(
+      "UPDATE employees SET employee_shift_id = ? WHERE id = ?",
+      [shiftIds || null, employeeId],
+    );
+
+    console.log(
+      `✅ Updated employee_shift_id cache for ${employeeId}: ${shiftIds}`,
+    );
+  } catch (error) {
+    console.error(
+      `❌ Failed to update employee_shift_id cache for ${employeeId}:`,
+      error,
+    );
   }
 };

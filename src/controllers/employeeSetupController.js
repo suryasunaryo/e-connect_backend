@@ -11,7 +11,7 @@ export const getBatchSetupOptions = async (req, res) => {
       "SELECT id, office_name FROM location WHERE deleted_at IS NULL ORDER BY office_name ASC",
     );
     const shifts = await dbHelpers.query(
-      "SELECT shift_id, shift_name FROM attendance_shifts ORDER BY shift_name ASC",
+      "SELECT shift_id, shift_name, shift_code FROM attendance_shifts ORDER BY shift_name ASC",
     );
     const departments = await dbHelpers.query(
       "SELECT id, dept_name FROM departments WHERE deleted_at IS NULL ORDER BY dept_name ASC",
@@ -58,7 +58,10 @@ export const batchUpdateEmployees = async (req, res) => {
       return res.status(400).json({ error: "Targets are required" });
     }
 
-    if (!field || !["location_id", "employee_shift_id"].includes(field)) {
+    if (
+      !field ||
+      !["location_id", "employee_shift_id", "department_id"].includes(field)
+    ) {
       return res.status(400).json({ error: "Invalid field for update" });
     }
 
@@ -117,19 +120,19 @@ export const batchUpdateEmployees = async (req, res) => {
       } else if (tType === "keyword") {
         // value format: "field|keyword"
         for (const val of rawIds) {
-          const [field, keyword] = val.split("|");
-          if (!field || !keyword) continue;
+          const [fieldVal, keyword] = val.split("|");
+          if (!fieldVal || !keyword) continue;
 
           let query = "";
           let params = [`%${keyword}%`];
 
-          if (field === "position_name") {
+          if (fieldVal === "position_name") {
             query = `SELECT e.id FROM employees e JOIN positions p ON e.position_id = p.id WHERE p.position_name LIKE ? AND e.deleted_at IS NULL`;
-          } else if (field === "dept_name") {
+          } else if (fieldVal === "dept_name") {
             query = `SELECT e.id FROM employees e JOIN departments d ON e.department_id = d.id WHERE d.dept_name LIKE ? AND e.deleted_at IS NULL`;
-          } else if (field === "full_name") {
+          } else if (fieldVal === "full_name") {
             query = `SELECT id FROM employees WHERE full_name LIKE ? AND deleted_at IS NULL`;
-          } else if (field === "nik") {
+          } else if (fieldVal === "nik") {
             query = `SELECT id FROM employees WHERE nik LIKE ? AND deleted_at IS NULL`;
           }
 
@@ -155,8 +158,31 @@ export const batchUpdateEmployees = async (req, res) => {
     }
 
     let affectedRows = 0;
+
+    // Handle Value (supports array or string)
+    let processedValue = value;
+    if (Array.isArray(value)) {
+      // For now, simple fields like department_id and employee_shift_id (FK) support only one value.
+      // We take the first selected value.
+      processedValue = value.length > 0 ? value[0] : null;
+    }
+
+    // Special logic for Shift Rules vs Setting Rules
+    if (field === "employee_shift_id") {
+      const { rule_type } = req.body;
+      if (rule_type === "setting") {
+        processedValue = null; // Set to NULL to use Global Setting
+      }
+      // If rule_type is shift, processedValue is already set to the selected shift_id
+    }
+
     const updateVal =
-      value === "" || value === null || value === "null" ? null : value;
+      processedValue === "" ||
+      processedValue === null ||
+      processedValue === "null" ||
+      processedValue === "global"
+        ? null
+        : processedValue;
 
     if (isAll) {
       const [result] = await connection.query(
