@@ -759,6 +759,48 @@ export const deleteShiftRule = async (req, res) => {
 // =======================================================
 // 6. ATTENDANCE CAPTURE
 // =======================================================
+
+// Save RFID log immediately after scan (without photo)
+export const saveRfidLog = async (req, res) => {
+  try {
+    const { nik, rfid_number, full_name } = req.body;
+    const pool = getPool();
+
+    const now = new Date();
+    const dateStr = now.toISOString().split("T")[0];
+    const timeStr = now.toTimeString().split(" ")[0];
+
+    const [result] = await pool.query(
+      "INSERT INTO attendance_log (nik, full_name, rfid_number, picture, attendance_date, attendance_time) VALUES (?, ?, ?, ?, ?, ?)",
+      [nik, full_name, rfid_number, null, dateStr, timeStr],
+    );
+
+    const newLog = {
+      id: result.insertId,
+      nik,
+      full_name,
+      rfid_number,
+      picture: null,
+      attendance_date: dateStr,
+      attendance_time: timeStr,
+      created_at: now.toISOString(),
+    };
+
+    emitDataChange("attendance_logs", "create", newLog);
+
+    console.log(`✅ RFID log saved immediately for NIK: ${nik}`);
+
+    res.json({
+      success: true,
+      message: "Attendance log saved successfully",
+      log_id: result.insertId,
+    });
+  } catch (error) {
+    console.error("❌ Error saving RFID log:", error);
+    res.status(500).json({ error: error.message });
+  }
+};
+
 export const uploadAttendanceCapture = async (req, res) => {
   try {
     if (!req.file) {
@@ -766,62 +808,69 @@ export const uploadAttendanceCapture = async (req, res) => {
     }
 
     const { nik } = req.body;
-    // Construct relative path based on the file destination
-    // req.file.destination gives absolute path, we want relative for DB/response
-    // e.g. /uploads/absensi/07022026/12345/absensi-12345-07022026.jpg
-
-    // We can extract relative path starting from 'uploads'
     const relativePath = req.file.path.split("uploads")[1];
-    const filePath = `/uploads${relativePath.replace(/\\/g, "/")}`; // Ensure forward slashes for URL
+    const filePath = `/uploads${relativePath.replace(/\\/g, "/")}`;
 
-    // Optional: Log to activity or database if needed
-    // Insert into attendance_log
     const pool = getPool();
-
-    // Get employee details for the log
-    // We assume NIK is unique and exists since they just scanned
-    const [empRows] = await pool.query(
-      "SELECT full_name, rfid_number FROM employees WHERE nik = ?",
-      [nik],
-    );
-    const emp = empRows[0] || {};
-
     const now = new Date();
-    const dateStr = now.toISOString().split("T")[0]; // YYYY-MM-DD
-    const timeStr = now.toTimeString().split(" ")[0]; // HH:MM:SS
+    const dateStr = now.toISOString().split("T")[0];
+    const timeStr = now.toTimeString().split(" ")[0];
 
-    const [result] = await pool.query(
-      "INSERT INTO attendance_log (nik, full_name, rfid_number, picture, attendance_date, attendance_time) VALUES (?, ?, ?, ?, ?, ?)",
-      [
-        nik,
-        emp.full_name || "Unknown",
-        emp.rfid_number || "Unknown",
-        filePath,
-        dateStr,
-        timeStr,
-      ],
+    // Try to find existing log from today for this NIK
+    const [existingLogs] = await pool.query(
+      "SELECT id FROM attendance_log WHERE nik = ? AND attendance_date = ? ORDER BY id DESC LIMIT 1",
+      [nik, dateStr],
     );
 
-    const newLog = {
-      id: result.insertId,
-      nik,
-      full_name: emp.full_name || "Unknown",
-      rfid_number: emp.rfid_number || "Unknown",
-      picture: filePath,
-      attendance_date: dateStr,
-      attendance_time: timeStr,
-      created_at: now.toISOString(),
-    };
+    let logId;
+    if (existingLogs.length > 0) {
+      // Update existing log with photo
+      logId = existingLogs[0].id;
+      await pool.query("UPDATE attendance_log SET picture = ? WHERE id = ?", [
+        filePath,
+        logId,
+      ]);
+      console.log(
+        `📸 Updated existing log ${logId} with photo for NIK: ${nik}`,
+      );
+    } else {
+      // Fallback: create new log if not found (backward compatibility)
+      const [empRows] = await pool.query(
+        "SELECT full_name, rfid_number FROM employees WHERE nik = ?",
+        [nik],
+      );
+      const emp = empRows[0] || {};
 
-    // Emit socket event for real-time updates
-    emitDataChange("attendance_logs", "create", newLog);
+      const [result] = await pool.query(
+        "INSERT INTO attendance_log (nik, full_name, rfid_number, picture, attendance_date, attendance_time) VALUES (?, ?, ?, ?, ?, ?)",
+        [
+          nik,
+          emp.full_name || "Unknown",
+          emp.rfid_number || "Unknown",
+          filePath,
+          dateStr,
+          timeStr,
+        ],
+      );
+      logId = result.insertId;
+      console.log(
+        `📸 Created new log ${logId} with photo for NIK: ${nik} (fallback)`,
+      );
+    }
+
+    // Emit update event
+    emitDataChange("attendance_logs", "update", {
+      id: logId,
+      picture: filePath,
+    });
 
     console.log(`📸 Attendance capture received and logged for NIK: ${nik}`);
 
     res.json({
       success: true,
-      message: "Attendance photo uploaded and logged successfully",
+      message: "Attendance photo uploaded successfully",
       file_path: filePath,
+      log_id: logId,
     });
   } catch (error) {
     console.error("Error uploading attendance capture:", error);

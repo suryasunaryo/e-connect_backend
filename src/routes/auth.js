@@ -78,7 +78,7 @@ router.post(
 
       // Cari user aktif + data karyawan (departemen/cabang/posisi)
       const user = await dbHelpers.queryOne(
-        `SELECT u.*, e.department_id, e.branch_id, e.position_id, COALESCE(u.profile_picture, e.picture) as profile_picture 
+        `SELECT u.*, e.department_id, e.branch_id, e.position_id, COALESCE(u.profile_picture, e.picture) as profile_picture, u.bypass_face_detection
          FROM users u
          LEFT JOIN employees e ON (e.user_id = u.id OR e.nik = u.username) AND e.deleted_at IS NULL
          WHERE u.username = ? AND u.is_active = TRUE`,
@@ -144,6 +144,7 @@ router.post(
           position_id: user.position_id,
           profile_picture: user.profile_picture,
           last_login: user.last_login,
+          bypass_face_detection: user.bypass_face_detection,
         },
       });
     } catch (error) {
@@ -220,7 +221,7 @@ router.post("/verify", async (req, res) => {
 
     // Pastikan user masih aktif + ambil data karyawan
     const user = await dbHelpers.queryOne(
-      `SELECT u.*, e.department_id, e.branch_id, e.position_id, COALESCE(u.profile_picture, e.picture) as profile_picture 
+      `SELECT u.*, e.department_id, e.branch_id, e.position_id, COALESCE(u.profile_picture, e.picture) as profile_picture, u.bypass_face_detection
        FROM users u 
        LEFT JOIN employees e ON (e.user_id = u.id OR e.nik = u.username) AND e.deleted_at IS NULL
        WHERE u.id = ? AND u.is_active = TRUE`,
@@ -286,7 +287,8 @@ router.get("/profile-details", verifyToken, async (req, res) => {
         d.dept_name as department_name,
         p.position_name,
         t.title_name,
-        r.role_name
+        r.role_name,
+        u.bypass_face_detection
       FROM users u
       LEFT JOIN employees e ON (e.user_id = u.id OR e.nik = u.username) AND e.deleted_at IS NULL
       LEFT JOIN departments d ON e.department_id = d.id
@@ -454,5 +456,67 @@ router.get("/health", async (req, res) => {
       .json({ status: "ERROR", message: "Database not reachable" });
   }
 });
+
+/**
+ * 🤖 UPDATE FACE DETECTION BYPASS (Admins only)
+ */
+router.put(
+  "/update-face-bypass",
+  verifyToken,
+  activityLogger.logUserActivity("UPDATE"),
+  async (req, res) => {
+    try {
+      const { bypass } = req.body;
+      const userId = req.user.id || req.user.user_id;
+
+      console.log("DEBUG: /update-face-bypass called", {
+        userId,
+        body: req.body,
+        userFromToken: req.user,
+      });
+
+      if (!req.user || (req.user.role !== "admin" && req.user.role !== "30")) {
+        console.warn("DEBUG: Access denied. Role:", req.user?.role);
+        return res
+          .status(403)
+          .json({ error: "Hanya Admin yang dapat mengubah pengaturan ini" });
+      }
+
+      if (userId === undefined) {
+        console.error("DEBUG: User ID is missing from req.user");
+        return res
+          .status(400)
+          .json({ error: "User ID tidak ditemukan dalam token" });
+      }
+
+      const newStatus = bypass ? 1 : 0;
+      const result = await dbHelpers.execute(
+        "UPDATE users SET bypass_face_detection = ?",
+        [newStatus],
+      );
+
+      console.log("DEBUG: Update result:", {
+        affectedRows: result.affectedRows,
+        changedRows: result.changedRows,
+      });
+
+      // 🔌 Real-time update via Socket.io
+      const io = getIo();
+      if (io) {
+        console.log("DEBUG: Emitting global face bypass update:", newStatus);
+        io.emit("settings:face_bypass_updated", { bypass: newStatus });
+      }
+
+      res.json({
+        success: true,
+        message: "Pengaturan Face Detection berhasil diperbarui secara global",
+        bypass: newStatus,
+      });
+    } catch (error) {
+      console.error("❌ Toggle face bypass error:", error);
+      res.status(500).json({ error: "Gagal memperbarui pengaturan" });
+    }
+  },
+);
 
 export default router;

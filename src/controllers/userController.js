@@ -13,7 +13,7 @@ const hashPassword = (password) => bcrypt.hashSync(password, 10);
 export const getAllUsers = async (req, res) => {
   try {
     const users = await dbHelpers.query(
-      "SELECT id, username, role, menu_groups, menu_access, menu_permissions, full_name, email, phone, is_active, is_online, last_activity, last_login, login_attempts, locked_until FROM users ORDER BY id DESC",
+      "SELECT id, username, role, menu_groups, menu_access, menu_permissions, full_name, email, phone, is_active, is_online, last_activity, last_login, login_attempts, locked_until, bypass_face_detection FROM users ORDER BY id DESC",
     );
     res.json({ success: true, data: users });
   } catch (error) {
@@ -29,7 +29,7 @@ export const getUserById = async (req, res) => {
   try {
     const { id } = req.params;
     const user = await dbHelpers.queryOne(
-      "SELECT id, username, role, menu_groups, menu_access, menu_permissions, full_name, email, phone, is_active, is_online, last_activity, last_login, login_attempts, locked_until FROM users WHERE id = ?",
+      "SELECT id, username, role, menu_groups, menu_access, menu_permissions, full_name, email, phone, is_active, is_online, last_activity, last_login, login_attempts, locked_until, bypass_face_detection FROM users WHERE id = ?",
       [id],
     );
     if (!user) return res.status(404).json({ error: "User tidak ditemukan" });
@@ -96,8 +96,8 @@ export const createUser = async (req, res) => {
 
     const hashed = hashPassword(password);
     await dbHelpers.execute(
-      `INSERT INTO users (username, password, role, menu_groups, menu_access, menu_permissions, full_name, email, phone, is_active)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO users (username, password, role, menu_groups, menu_access, menu_permissions, full_name, email, phone, is_active, bypass_face_detection)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         username,
         hashed,
@@ -109,6 +109,7 @@ export const createUser = async (req, res) => {
         email || "",
         phone || "",
         is_active ?? true,
+        0, // Default to 0 (ON) for new users
       ],
     );
 

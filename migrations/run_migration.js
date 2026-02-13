@@ -11,7 +11,8 @@ const runMigration = async () => {
   try {
     await initDatabase(); // Initialize DB connection
 
-    const migrationPath = path.join(__dirname, "fix_target_type_column.sql");
+    const fileName = process.argv[2] || "fix_target_type_column.sql";
+    const migrationPath = path.join(__dirname, fileName);
     const sql = fs.readFileSync(migrationPath, "utf8");
 
     console.log("Running migration from:", migrationPath);

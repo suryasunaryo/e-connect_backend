@@ -303,14 +303,27 @@ export const resetToDefaults = async (req, res) => {
 /**
  * 👥 Get Who's Online
  * Returns currently logged-in users based on recent activity
+ * - Admin users: See all online users
+ * - Regular users: Only see users from their own department
  */
 export const getWhosOnline = async (req, res) => {
   try {
     const currentUserId = req.user.id;
+    const currentUserRole = req.user.role; // role name (e.g., "admin", "user")
 
-    // Get users who have been active in the last 15 minutes
-    const onlineUsers = await dbHelpers.query(
-      `SELECT 
+    // Get current user's department
+    const currentUserData = await dbHelpers.queryOne(
+      `SELECT e.department_id 
+       FROM employees e 
+       WHERE e.user_id = ?`,
+      [currentUserId],
+    );
+
+    const currentDepartmentId = currentUserData?.department_id;
+
+    // Build the query based on user role
+    let query = `
+      SELECT 
         u.id,
         u.full_name,
         u.email,
@@ -327,8 +340,25 @@ export const getWhosOnline = async (req, res) => {
       WHERE u.last_activity >= DATE_SUB(NOW(), INTERVAL 15 MINUTE)
         AND u.deleted_at IS NULL
         AND u.is_active = 1
-      ORDER BY u.last_activity DESC`,
-    );
+    `;
+
+    const params = [];
+
+    // If not admin role, filter by department
+    if (currentUserRole !== "admin") {
+      if (currentDepartmentId) {
+        query += ` AND e.department_id = ?`;
+        params.push(currentDepartmentId);
+      } else {
+        // If user has no department, show only themselves
+        query += ` AND u.id = ?`;
+        params.push(currentUserId);
+      }
+    }
+
+    query += ` ORDER BY u.last_activity DESC`;
+
+    const onlineUsers = await dbHelpers.query(query, params);
 
     res.json({ success: true, data: onlineUsers });
   } catch (error) {

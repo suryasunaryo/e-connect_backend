@@ -21,6 +21,7 @@ import {
   createShiftRule,
   updateShiftRule,
   deleteShiftRule,
+  saveRfidLog,
   uploadAttendanceCapture,
   getAttendanceLogs,
   deleteAttendanceLog,
@@ -95,6 +96,8 @@ router.put("/codes/:id", updateAttendanceCode);
 router.delete("/codes/:id", deleteAttendanceCode);
 
 // Attendance Capture
+// Attendance Capture (RFID)
+router.post("/rfid-log", saveRfidLog);
 router.post("/capture", upload.single("file"), uploadAttendanceCapture);
 
 // Attendance Logs

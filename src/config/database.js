@@ -715,6 +715,33 @@ const createTablesIfNeeded = async (pool) => {
         `);
         console.log("✅ portal_settings table created successfully");
       }
+
+      // Check and create banners table
+      const [tableBanners] = await connection.execute(
+        "SELECT COUNT(*) as count FROM information_schema.tables WHERE table_schema = ? AND table_name = 'banners'",
+        [dbConfig.database],
+      );
+      if (tableBanners[0].count === 0) {
+        console.log("creating: banners table...");
+        await connection.execute(`
+          CREATE TABLE banners (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            title VARCHAR(255) NOT NULL,
+            description TEXT,
+            banner_image VARCHAR(255),
+            link_url VARCHAR(255),
+            is_active TINYINT(1) DEFAULT 1,
+            priority INT DEFAULT 0,
+            is_deleted TINYINT(1) DEFAULT 0,
+            deleted_at TIMESTAMP NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            created_by INT NULL,
+            FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL
+          )
+        `);
+        console.log("✅ banners table created successfully");
+      }
     } catch (migErr) {
       console.error("Migration error (Notifications/Views):", migErr.message);
     }

@@ -22,6 +22,8 @@ import { authenticateToken } from "./middleware/auth.js";
 import newsRoutes from "./routes/newsRoutes.js";
 import portalSettingsRoutes from "./routes/portalSettingsRoutes.js";
 import employeeSetupRoutes from "./routes/employeeSetupRoutes.js";
+import publicRoutes from "./routes/publicRoutes.js";
+import bannerRoutes from "./routes/bannerRoutes.js";
 
 // Load environment variables
 dotenv.config();
@@ -73,6 +75,7 @@ app.get("/api/health", async (req, res) => {
 // =======================================================
 // 🚀 REGISTER API ROUTES
 // =======================================================
+app.use("/api/public", publicRoutes);
 app.use("/api/news", newsRoutes);
 app.use("/api/users", userRoutes);
 app.use("/api/user-roles", authenticateToken, userRoleRoutes);
@@ -89,6 +92,7 @@ app.use(
   calendarEventTypeRoutes,
 );
 app.use("/api/portal-settings", authenticateToken, portalSettingsRoutes);
+app.use("/api/banners", authenticateToken, bannerRoutes);
 app.use("/api/employee-batch-setup", authenticateToken, employeeSetupRoutes);
 app.use("/api", apiRoutes);
 
