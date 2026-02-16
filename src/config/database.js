@@ -167,8 +167,132 @@ const createTablesIfNeeded = async (pool) => {
       );
 
       console.log("✅ Tables created, default admin (admin/admin123) added");
-    } else {
-      console.log("✅ Tables already exist");
+    }
+
+    // ---------------------------------------------------------
+    // MIGRATION / INITIALIZATION: users_role table
+    // ---------------------------------------------------------
+    const [usersRoleTable] = await connection.execute(
+      "SELECT COUNT(*) as count FROM information_schema.tables WHERE table_schema = ? AND table_name = 'users_role'",
+      [dbConfig.database],
+    );
+
+    if (usersRoleTable[0].count === 0) {
+      console.log("📋 Creating users_role table...");
+      await connection.execute(`
+        CREATE TABLE users_role (
+          id INT AUTO_INCREMENT PRIMARY KEY,
+          role_id VARCHAR(50) NOT NULL,
+          role_name VARCHAR(255),
+          menu_groups VARCHAR(255),
+          menu_access VARCHAR(255),
+          menu_permissions JSON,
+          is_active TINYINT(1) DEFAULT 1,
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+          updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+          deleted_at TIMESTAMP NULL,
+          is_deleted INT DEFAULT 0,
+          UNIQUE KEY (role_id)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+      `);
+
+      // Seed initial roles
+      console.log("🌱 Seeding users_role table...");
+      await connection.execute(`
+        INSERT INTO users_role (role_id, role_name, is_active) VALUES 
+        ('1', 'Admin', 1),
+        ('2', 'Restricted User', 1),
+        ('31', 'Default Role', 1)
+      `);
+      console.log("✅ users_role table created and seeded");
+    }
+
+    // Add role_id to users if it doesn't exist
+    try {
+      const [roleIdColCheck] = await connection.execute(
+        "SELECT COUNT(*) as count FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = ? AND TABLE_NAME = 'users' AND COLUMN_NAME = 'role_id'",
+        [dbConfig.database],
+      );
+      if (roleIdColCheck[0].count === 0) {
+        console.log("migrating: Adding role_id column to users table...");
+        await connection.execute(
+          "ALTER TABLE users ADD COLUMN role_id VARCHAR(50) NULL AFTER role",
+        );
+        // Set existing admin to role_id '1'
+        await connection.execute(
+          "UPDATE users SET role_id = '1' WHERE username = 'admin'",
+        );
+      }
+    } catch (err) {
+      console.warn("Migration warning (users.role_id):", err.message);
+    }
+
+    // ---------------------------------------------------------
+    // MIGRATION: location, branches, departments
+    // ---------------------------------------------------------
+    const [locationTable] = await connection.execute(
+      "SELECT COUNT(*) as count FROM information_schema.tables WHERE table_schema = ? AND table_name = 'location'",
+      [dbConfig.database],
+    );
+
+    if (locationTable[0].count === 0) {
+      console.log("📋 Creating location table...");
+      await connection.execute(`
+        CREATE TABLE location (
+          id INT AUTO_INCREMENT PRIMARY KEY,
+          office_name VARCHAR(255) NOT NULL,
+          office_address TEXT,
+          is_active TINYINT(1) DEFAULT 1,
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+          updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+          deleted_at TIMESTAMP NULL
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+      `);
+    }
+
+    const [branchesTable] = await connection.execute(
+      "SELECT COUNT(*) as count FROM information_schema.tables WHERE table_schema = ? AND table_name = 'branches'",
+      [dbConfig.database],
+    );
+
+    if (branchesTable[0].count === 0) {
+      console.log("📋 Creating branches table...");
+      await connection.execute(`
+        CREATE TABLE branches (
+          id INT AUTO_INCREMENT PRIMARY KEY,
+          branch_name VARCHAR(255) NOT NULL,
+          branch_desc TEXT,
+          is_active TINYINT(1) DEFAULT 1,
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+          updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+          deleted_at TIMESTAMP NULL
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+      `);
+    }
+
+    const [departmentsTable] = await connection.execute(
+      "SELECT COUNT(*) as count FROM information_schema.tables WHERE table_schema = ? AND table_name = 'departments'",
+      [dbConfig.database],
+    );
+
+    if (departmentsTable[0].count === 0) {
+      console.log("📋 Creating departments table...");
+      await connection.execute(`
+        CREATE TABLE departments (
+          id INT AUTO_INCREMENT PRIMARY KEY,
+          branch_id INT,
+          dept_name VARCHAR(255) NOT NULL,
+          dept_code VARCHAR(50),
+          parent_id INT NULL,
+          location INT NULL,
+          is_active TINYINT(1) DEFAULT 1,
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+          updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+          deleted_at TIMESTAMP NULL,
+          FOREIGN KEY (branch_id) REFERENCES branches(id) ON DELETE SET NULL,
+          FOREIGN KEY (location) REFERENCES location(id) ON DELETE SET NULL
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+      `);
     }
 
     // ---------------------------------------------------------
@@ -279,6 +403,102 @@ const createTablesIfNeeded = async (pool) => {
       `);
 
       console.log("✅ national_holidays_cache table created successfully");
+    }
+
+    // ---------------------------------------------------------
+    // MIGRATION: positions, titles, employees
+    // ---------------------------------------------------------
+    const [positionsTable] = await connection.execute(
+      "SELECT COUNT(*) as count FROM information_schema.tables WHERE table_schema = ? AND table_name = 'positions'",
+      [dbConfig.database],
+    );
+
+    if (positionsTable[0].count === 0) {
+      console.log("📋 Creating positions table...");
+      await connection.execute(`
+        CREATE TABLE positions (
+          id INT AUTO_INCREMENT PRIMARY KEY,
+          dept_id INT NULL,
+          position_name VARCHAR(255) NOT NULL,
+          parent_id INT NULL,
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+          updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+          deleted_at TIMESTAMP NULL,
+          FOREIGN KEY (dept_id) REFERENCES departments(id) ON DELETE SET NULL
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+      `);
+    }
+
+    const [titlesTable] = await connection.execute(
+      "SELECT COUNT(*) as count FROM information_schema.tables WHERE table_schema = ? AND table_name = 'titles'",
+      [dbConfig.database],
+    );
+
+    if (titlesTable[0].count === 0) {
+      console.log("📋 Creating titles table...");
+      await connection.execute(`
+        CREATE TABLE titles (
+          id INT AUTO_INCREMENT PRIMARY KEY,
+          title_name VARCHAR(255) NOT NULL,
+          is_active TINYINT(1) DEFAULT 1,
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+          updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+          deleted_at TIMESTAMP NULL
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+      `);
+    }
+
+    const [employeesTable] = await connection.execute(
+      "SELECT COUNT(*) as count FROM information_schema.tables WHERE table_schema = ? AND table_name = 'employees'",
+      [dbConfig.database],
+    );
+
+    if (employeesTable[0].count === 0) {
+      console.log("📋 Creating employees table...");
+      await connection.execute(`
+        CREATE TABLE employees (
+          id INT AUTO_INCREMENT PRIMARY KEY,
+          user_id INT NULL,
+          nik VARCHAR(50) UNIQUE NOT NULL,
+          full_name VARCHAR(255) NOT NULL,
+          branch_id INT NULL,
+          department_id INT NULL,
+          position_id INT NULL,
+          location_id INT NULL,
+          title_id INT NULL,
+          employee_status VARCHAR(50),
+          employee_shift_id INT NULL,
+          join_date DATE,
+          effective_date DATE,
+          effective_end_date DATE,
+          religion VARCHAR(50),
+          gender ENUM('Male', 'Female'),
+          marital_status VARCHAR(50),
+          place_of_birth VARCHAR(100),
+          date_of_birth DATE,
+          address TEXT,
+          phone VARCHAR(20),
+          office_email VARCHAR(100),
+          personal_email VARCHAR(100),
+          npwp VARCHAR(50),
+          bpjs_tk VARCHAR(50),
+          bpjs_health VARCHAR(50),
+          ktp_number VARCHAR(50),
+          rfid_number VARCHAR(50),
+          picture VARCHAR(255),
+          is_active TINYINT(1) DEFAULT 1,
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+          updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+          deleted_at TIMESTAMP NULL,
+          is_deleted TINYINT(1) DEFAULT 0,
+          FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL,
+          FOREIGN KEY (branch_id) REFERENCES branches(id) ON DELETE SET NULL,
+          FOREIGN KEY (department_id) REFERENCES departments(id) ON DELETE SET NULL,
+          FOREIGN KEY (position_id) REFERENCES positions(id) ON DELETE SET NULL,
+          FOREIGN KEY (location_id) REFERENCES location(id) ON DELETE SET NULL,
+          FOREIGN KEY (title_id) REFERENCES titles(id) ON DELETE SET NULL
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+      `);
     }
 
     // Check and create news table
@@ -591,6 +811,192 @@ const createTablesIfNeeded = async (pool) => {
     }
 
     // ---------------------------------------------------------
+    // MIGRATION: attendance tables
+    // ---------------------------------------------------------
+    const [attendanceShiftsTable] = await connection.execute(
+      "SELECT COUNT(*) as count FROM information_schema.tables WHERE table_schema = ? AND table_name = 'attendance_shifts'",
+      [dbConfig.database],
+    );
+
+    if (attendanceShiftsTable[0].count === 0) {
+      console.log("📋 Creating attendance_shifts table...");
+      await connection.execute(`
+        CREATE TABLE attendance_shifts (
+          id INT AUTO_INCREMENT PRIMARY KEY,
+          shift_name VARCHAR(100) NOT NULL,
+          start_time TIME NOT NULL,
+          end_time TIME NOT NULL,
+          is_active TINYINT(1) DEFAULT 1,
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+          updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+          deleted_at TIMESTAMP NULL
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+      `);
+    }
+
+    const [attendanceShiftRulesTable] = await connection.execute(
+      "SELECT COUNT(*) as count FROM information_schema.tables WHERE table_schema = ? AND table_name = 'attendance_shift_rules'",
+      [dbConfig.database],
+    );
+
+    if (attendanceShiftRulesTable[0].count === 0) {
+      console.log("📋 Creating attendance_shift_rules table...");
+      await connection.execute(`
+        CREATE TABLE attendance_shift_rules (
+          id INT AUTO_INCREMENT PRIMARY KEY,
+          shift_id INT NOT NULL,
+          rule_name VARCHAR(100) NOT NULL,
+          rule_value VARCHAR(255) NOT NULL,
+          is_active TINYINT(1) DEFAULT 1,
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+          updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+          deleted_at TIMESTAMP NULL,
+          FOREIGN KEY (shift_id) REFERENCES attendance_shifts(id) ON DELETE CASCADE
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+      `);
+    }
+
+    const [attendanceEmployeeShiftTable] = await connection.execute(
+      "SELECT COUNT(*) as count FROM information_schema.tables WHERE table_schema = ? AND table_name = 'attendance_employee_shift'",
+      [dbConfig.database],
+    );
+
+    if (attendanceEmployeeShiftTable[0].count === 0) {
+      console.log("📋 Creating attendance_employee_shift table...");
+      await connection.execute(`
+        CREATE TABLE attendance_employee_shift (
+          id INT AUTO_INCREMENT PRIMARY KEY,
+          employee_id INT NULL,
+          target_type VARCHAR(50) DEFAULT 'user',
+          target_value TEXT NULL,
+          rule_type VARCHAR(20) DEFAULT 'shift',
+          shift_id INT NULL,
+          start_date DATE,
+          end_date DATE,
+          is_active TINYINT(1) DEFAULT 1,
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+          updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+          deleted_at TIMESTAMP NULL,
+          FOREIGN KEY (employee_id) REFERENCES employees(id) ON DELETE CASCADE,
+          FOREIGN KEY (shift_id) REFERENCES attendance_shifts(id) ON DELETE SET NULL
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+      `);
+    }
+
+    const [attendanceCodeTable] = await connection.execute(
+      "SELECT COUNT(*) as count FROM information_schema.tables WHERE table_schema = ? AND table_name = 'attendance_code'",
+      [dbConfig.database],
+    );
+
+    if (attendanceCodeTable[0].count === 0) {
+      console.log("📋 Creating attendance_code table...");
+      await connection.execute(`
+        CREATE TABLE attendance_code (
+          id INT AUTO_INCREMENT PRIMARY KEY,
+          code VARCHAR(20) UNIQUE NOT NULL,
+          description VARCHAR(255),
+          is_active TINYINT(1) DEFAULT 1,
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+          updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+          deleted_at TIMESTAMP NULL
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+      `);
+    }
+
+    const [attendanceSettingsTable] = await connection.execute(
+      "SELECT COUNT(*) as count FROM information_schema.tables WHERE table_schema = ? AND table_name = 'attendance_settings'",
+      [dbConfig.database],
+    );
+
+    if (attendanceSettingsTable[0].count === 0) {
+      console.log("📋 Creating attendance_settings table...");
+      await connection.execute(`
+        CREATE TABLE attendance_settings (
+          id INT AUTO_INCREMENT PRIMARY KEY,
+          setting_key VARCHAR(100) UNIQUE NOT NULL,
+          setting_value TEXT,
+          description TEXT,
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+          updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+      `);
+    }
+
+    // ---------------------------------------------------------
+    // MIGRATION: dashboard and apps
+    // ---------------------------------------------------------
+    const [dashboardCardsTable] = await connection.execute(
+      "SELECT COUNT(*) as count FROM information_schema.tables WHERE table_schema = ? AND table_name = 'dashboard_cards'",
+      [dbConfig.database],
+    );
+
+    if (dashboardCardsTable[0].count === 0) {
+      console.log("📋 Creating dashboard_cards table...");
+      await connection.execute(`
+        CREATE TABLE dashboard_cards (
+          id INT AUTO_INCREMENT PRIMARY KEY,
+          card_name VARCHAR(100) NOT NULL,
+          card_type VARCHAR(50) NOT NULL,
+          component_name VARCHAR(100),
+          default_x INT DEFAULT 0,
+          default_y INT DEFAULT 0,
+          default_w INT DEFAULT 12,
+          default_h INT DEFAULT 4,
+          is_active TINYINT(1) DEFAULT 1,
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+          updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+      `);
+    }
+
+    const [userDashboardPreferencesTable] = await connection.execute(
+      "SELECT COUNT(*) as count FROM information_schema.tables WHERE table_schema = ? AND table_name = 'user_dashboard_preferences'",
+      [dbConfig.database],
+    );
+
+    if (userDashboardPreferencesTable[0].count === 0) {
+      console.log("📋 Creating user_dashboard_preferences table...");
+      await connection.execute(`
+        CREATE TABLE user_dashboard_preferences (
+          id INT AUTO_INCREMENT PRIMARY KEY,
+          user_id INT NOT NULL,
+          card_id INT NOT NULL,
+          is_visible TINYINT(1) NOT NULL DEFAULT 1,
+          display_order INT NOT NULL DEFAULT 0,
+          x INT DEFAULT 0,
+          y INT DEFAULT 0,
+          w INT DEFAULT 12,
+          h INT DEFAULT 4,
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+          updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+          UNIQUE KEY unique_user_card (user_id, card_id),
+          FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+          FOREIGN KEY (card_id) REFERENCES dashboard_cards(id) ON DELETE CASCADE
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+      `);
+    }
+
+    const [userFavoriteAppsTable] = await connection.execute(
+      "SELECT COUNT(*) as count FROM information_schema.tables WHERE table_schema = ? AND table_name = 'user_favorite_apps'",
+      [dbConfig.database],
+    );
+
+    if (userFavoriteAppsTable[0].count === 0) {
+      console.log("📋 Creating user_favorite_apps table...");
+      await connection.execute(`
+        CREATE TABLE user_favorite_apps (
+          id INT AUTO_INCREMENT PRIMARY KEY,
+          user_id INT NOT NULL,
+          portal_app_id INT NOT NULL,
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+          UNIQUE KEY unique_user_app (user_id, portal_app_id),
+          FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+          FOREIGN KEY (portal_app_id) REFERENCES portal_settings(id) ON DELETE CASCADE
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+      `);
+    }
+
+    // ---------------------------------------------------------
     // MIGRATION: Notifications and User Item Views
     // ---------------------------------------------------------
     try {
@@ -840,6 +1246,206 @@ const createTablesIfNeeded = async (pool) => {
       console.warn(
         "Migration warning (attendance_employee_shift columns):",
         migErr.message,
+      );
+    }
+    // 🚀 Migration for Trucks: add missing columns if they don't exist
+    try {
+      const [cols] = await connection.execute("SHOW COLUMNS FROM trucks");
+      const columnNames = cols.map((c) => c.Field);
+
+      if (!columnNames.includes("priority")) {
+        await connection.execute(
+          "ALTER TABLE trucks ADD COLUMN priority ENUM('normal', 'high', 'urgent', 'low') DEFAULT 'normal' AFTER status",
+        );
+      }
+      if (!columnNames.includes("dock_number")) {
+        await connection.execute(
+          "ALTER TABLE trucks ADD COLUMN dock_number VARCHAR(50) NULL AFTER check_in_time",
+        );
+      }
+      if (!columnNames.includes("cargo_type")) {
+        await connection.execute(
+          "ALTER TABLE trucks ADD COLUMN cargo_type VARCHAR(100) NULL AFTER dock_number",
+        );
+      }
+      if (!columnNames.includes("cargo_weight")) {
+        await connection.execute(
+          "ALTER TABLE trucks ADD COLUMN cargo_weight VARCHAR(50) NULL AFTER cargo_type",
+        );
+      }
+      if (!columnNames.includes("special_instructions")) {
+        await connection.execute(
+          "ALTER TABLE trucks ADD COLUMN special_instructions TEXT NULL AFTER notes",
+        );
+      }
+      if (!columnNames.includes("created_by")) {
+        await connection.execute(
+          "ALTER TABLE trucks ADD COLUMN created_by INT NULL AFTER special_instructions",
+        );
+        // Add foreign key for created_by
+        await connection.execute(
+          "ALTER TABLE trucks ADD CONSTRAINT fk_trucks_created_by FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL",
+        );
+      }
+    } catch (migErr) {
+      console.warn("Migration warning (trucks columns):", migErr.message);
+    }
+
+    // ---------------------------------------------------------
+    // MIGRATION: Views
+    // ---------------------------------------------------------
+    console.log("📋 Updating views...");
+    try {
+      await connection.execute(`
+        CREATE OR REPLACE VIEW active_trucks AS 
+        SELECT 
+          t.id, t.license_plate, t.driver_name, t.destination, t.status, t.priority, 
+          t.scheduled_time, t.check_in_time, t.dock_number, t.cargo_type, t.cargo_weight,
+          CASE 
+            WHEN t.status IN ('checked_in', 'loading', 'loaded') THEN TIMESTAMPDIFF(MINUTE, t.check_in_time, NOW())
+            WHEN t.status = 'checked_out' THEN t.duration_minutes 
+            ELSE NULL 
+          END AS current_duration,
+          t.notes, t.special_instructions, u.full_name AS created_by_name
+        FROM trucks t
+        LEFT JOIN users u ON t.created_by = u.id
+        WHERE t.status IN ('scheduled', 'checked_in', 'loading', 'loaded')
+        ORDER BY 
+          CASE t.priority WHEN 'urgent' THEN 1 WHEN 'high' THEN 2 WHEN 'normal' THEN 3 WHEN 'low' THEN 4 END,
+          t.scheduled_time;
+      `);
+
+      await connection.execute(`
+        CREATE OR REPLACE VIEW dashboard_summary AS 
+        SELECT 
+          COUNT(*) AS total_trucks,
+          SUM(CASE WHEN status = 'scheduled' THEN 1 ELSE 0 END) AS scheduled_count,
+          SUM(CASE WHEN status = 'checked_in' THEN 1 ELSE 0 END) AS checked_in_count,
+          SUM(CASE WHEN status = 'loading' THEN 1 ELSE 0 END) AS loading_count,
+          SUM(CASE WHEN status = 'loaded' THEN 1 ELSE 0 END) AS loaded_count,
+          SUM(CASE WHEN status = 'checked_out' THEN 1 ELSE 0 END) AS checked_out_count,
+          SUM(CASE WHEN status = 'cancelled' THEN 1 ELSE 0 END) AS cancelled_count,
+          ROUND(AVG(duration_minutes), 2) AS avg_duration_minutes,
+          SUM(CASE WHEN DATE(scheduled_time) = CURDATE() THEN 1 ELSE 0 END) AS today_trucks
+        FROM trucks;
+      `);
+
+      await connection.execute(`
+        CREATE OR REPLACE VIEW departments_view AS 
+        SELECT 
+          d.id AS department_id, d.branch_id, d.dept_name, d.dept_code, d.parent_id, d.location,
+          b.branch_name, b.branch_desc, p.dept_name AS parent_name, 
+          l.office_name, l.office_address
+        FROM departments d
+        LEFT JOIN branches b ON d.branch_id = b.id
+        LEFT JOIN departments p ON d.parent_id = p.id
+        LEFT JOIN location l ON d.location = l.id
+        WHERE d.deleted_at IS NULL;
+      `);
+
+      await connection.execute(`
+        CREATE OR REPLACE VIEW testing_view AS 
+        SELECT 
+          e.*, d.dept_name AS department_name, p.position_name, t.title_name, b.branch_name
+        FROM employees e
+        LEFT JOIN departments d ON e.department_id = d.id
+        LEFT JOIN positions p ON e.position_id = p.id
+        LEFT JOIN titles t ON e.title_id = t.id
+        LEFT JOIN branches b ON e.branch_id = b.id
+        WHERE e.deleted_at IS NULL
+        ORDER BY e.full_name;
+      `);
+      console.log("✅ Views updated successfully");
+    } catch (viewErr) {
+      console.error("Error updating views:", viewErr.message);
+    }
+
+    // ---------------------------------------------------------
+    // SEEDING: dashboard_cards
+    // ---------------------------------------------------------
+    const [cardCount] = await connection.execute(
+      "SELECT COUNT(*) as count FROM dashboard_cards",
+    );
+    if (cardCount[0].count === 0) {
+      console.log("🌱 Seeding dashboard_cards...");
+      const defaultCards = [
+        [
+          "Attendance Overview",
+          "attendance",
+          "AttendanceOverviewCard",
+          0,
+          0,
+          6,
+          4,
+        ],
+        ["Who's Online", "status", "WhosOnlineCard", 6, 0, 6, 4],
+        ["Recent Announcements", "news", "RecentNewsCard", 0, 4, 12, 4],
+        ["Quick Actions", "actions", "QuickActionsCard", 0, 8, 4, 4],
+        ["Calendar Events", "calendar", "CalendarCard", 4, 8, 8, 4],
+      ];
+      await connection.query(
+        "INSERT INTO dashboard_cards (card_name, card_type, component_name, default_x, default_y, default_w, default_h) VALUES ?",
+        [defaultCards],
+      );
+    }
+
+    // ---------------------------------------------------------
+    // SEEDING: attendance_settings
+    // ---------------------------------------------------------
+    const [settingCount] = await connection.execute(
+      "SELECT COUNT(*) as count FROM attendance_settings",
+    );
+    if (settingCount[0].count === 0) {
+      console.log("🌱 Seeding attendance_settings...");
+      const defaultSettings = [
+        ["late_threshold", "15", "Threshold in minutes to be considered late"],
+        [
+          "half_day_threshold",
+          "240",
+          "Threshold in minutes for half day attendance",
+        ],
+        ["early_leave_buffer", "5", "Buffer in minutes for early leave"],
+      ];
+      await connection.query(
+        "INSERT INTO attendance_settings (setting_key, setting_value, description) VALUES ?",
+        [defaultSettings],
+      );
+    }
+
+    // ---------------------------------------------------------
+    // SEEDING: portal_settings
+    // ---------------------------------------------------------
+    const [portalCount] = await connection.execute(
+      "SELECT COUNT(*) as count FROM portal_settings",
+    );
+    if (portalCount[0].count === 0) {
+      console.log("🌱 Seeding portal_settings...");
+      const defaultPortals = [
+        [
+          "INFOR LN",
+          "Enterprise Resource Planning System",
+          "ERP",
+          "http://10.4.1.16:8312/webui/servlet/standalone",
+          "/uploads/portal/default-erp.png",
+        ],
+        [
+          "ANDAL ESS",
+          "Employee Self Service Portal",
+          "HR",
+          "http://10.4.1.8/",
+          "/uploads/portal/default-hr.png",
+        ],
+        [
+          "Helpdesk MIS",
+          "MIS Support Ticketing System",
+          "Support",
+          "http://10.4.1.116/ticket_mis",
+          "/uploads/portal/default-support.png",
+        ],
+      ];
+      await connection.query(
+        "INSERT INTO portal_settings (portal_name, description, category, url, portal_image) VALUES ?",
+        [defaultPortals],
       );
     }
   } catch (error) {

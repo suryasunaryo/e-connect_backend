@@ -1,7 +1,7 @@
 {
-  "name": "truck-queue-backend",
+  "name": "e-connect-backend",
   "version": "1.0.0",
-  "description": "Backend for Truck Queue Management System",
+  "description": "Backend for E-Connect System",
   "main": "src/server.js",
   "type": "module",
   "scripts": {
