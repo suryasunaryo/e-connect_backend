@@ -446,12 +446,37 @@ const createTablesIfNeeded = async (pool) => {
           picture VARCHAR(255),
           attendance_date DATE,
           attendance_time TIME,
+          is_matched VARCHAR(50) DEFAULT NULL,
           created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
           INDEX idx_nik (nik),
           INDEX idx_date (attendance_date)
         )
       `);
       console.log("✅ attendance_log table created successfully");
+    }
+
+    // ---------------------------------------------------------
+    // MIGRATION: Ensure is_matched column exists in attendance_log
+    // ---------------------------------------------------------
+    try {
+      const [attColCheck] = await connection.execute(
+        "SELECT COUNT(*) as count FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = ? AND TABLE_NAME = 'attendance_log' AND COLUMN_NAME = 'is_matched'",
+        [dbConfig.database],
+      );
+      if (attColCheck[0].count === 0) {
+        console.log(
+          "migrating: Adding is_matched column to attendance_log table...",
+        );
+        await connection.execute(
+          "ALTER TABLE attendance_log ADD COLUMN is_matched VARCHAR(50) DEFAULT NULL AFTER attendance_time",
+        );
+        console.log("✅ is_matched column added to attendance_log.");
+      }
+    } catch (migErr) {
+      console.error(
+        "Migration warning (attendance_log.is_matched):",
+        migErr.message,
+      );
     }
 
     // ---------------------------------------------------------

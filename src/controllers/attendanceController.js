@@ -807,7 +807,9 @@ export const uploadAttendanceCapture = async (req, res) => {
       return res.status(400).json({ error: "No file uploaded" });
     }
 
-    const { nik } = req.body;
+    const { nik, is_matched } = req.body;
+    console.log("📥 Upload capture request body:", req.body);
+    const matchedValue = is_matched || null;
     const relativePath = req.file.path.split("uploads")[1];
     const filePath = `/uploads${relativePath.replace(/\\/g, "/")}`;
 
@@ -824,14 +826,14 @@ export const uploadAttendanceCapture = async (req, res) => {
 
     let logId;
     if (existingLogs.length > 0) {
-      // Update existing log with photo
+      // Update existing log with photo and match status
       logId = existingLogs[0].id;
-      await pool.query("UPDATE attendance_log SET picture = ? WHERE id = ?", [
-        filePath,
-        logId,
-      ]);
+      await pool.query(
+        "UPDATE attendance_log SET picture = ?, is_matched = ? WHERE id = ?",
+        [filePath, matchedValue, logId],
+      );
       console.log(
-        `📸 Updated existing log ${logId} with photo for NIK: ${nik}`,
+        `📸 Updated existing log ${logId} with photo and match=${matchedValue} for NIK: ${nik}`,
       );
     } else {
       // Fallback: create new log if not found (backward compatibility)
@@ -842,19 +844,20 @@ export const uploadAttendanceCapture = async (req, res) => {
       const emp = empRows[0] || {};
 
       const [result] = await pool.query(
-        "INSERT INTO attendance_log (nik, full_name, rfid_number, picture, attendance_date, attendance_time) VALUES (?, ?, ?, ?, ?, ?)",
+        "INSERT INTO attendance_log (nik, full_name, rfid_number, picture, is_matched, attendance_date, attendance_time) VALUES (?, ?, ?, ?, ?, ?, ?)",
         [
           nik,
           emp.full_name || "Unknown",
           emp.rfid_number || "Unknown",
           filePath,
+          matchedValue,
           dateStr,
           timeStr,
         ],
       );
       logId = result.insertId;
       console.log(
-        `📸 Created new log ${logId} with photo for NIK: ${nik} (fallback)`,
+        `📸 Created new log ${logId} with photo and match=${matchedValue} for NIK: ${nik} (fallback)`,
       );
     }
 
@@ -862,6 +865,7 @@ export const uploadAttendanceCapture = async (req, res) => {
     emitDataChange("attendance_logs", "update", {
       id: logId,
       picture: filePath,
+      is_matched: matchedValue,
     });
 
     console.log(`📸 Attendance capture received and logged for NIK: ${nik}`);
@@ -871,6 +875,7 @@ export const uploadAttendanceCapture = async (req, res) => {
       message: "Attendance photo uploaded successfully",
       file_path: filePath,
       log_id: logId,
+      is_matched: matchedValue,
     });
   } catch (error) {
     console.error("Error uploading attendance capture:", error);
@@ -880,7 +885,14 @@ export const uploadAttendanceCapture = async (req, res) => {
 
 export const getAttendanceLogs = async (req, res) => {
   try {
-    const { startDate, endDate, page = 1, limit = 10, search = "" } = req.query;
+    const {
+      startDate,
+      endDate,
+      page = 1,
+      limit = 10,
+      search = "",
+      match_status,
+    } = req.query;
     const offset = (page - 1) * limit;
     const pool = getPool();
 
@@ -900,6 +912,11 @@ export const getAttendanceLogs = async (req, res) => {
       );
       const searchVal = `%${search}%`;
       params.push(searchVal, searchVal, searchVal);
+    }
+
+    if (match_status && match_status !== "all") {
+      whereClauses.push("is_matched = ?");
+      params.push(match_status);
     }
 
     const whereClause =

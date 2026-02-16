@@ -1,0 +1,12 @@
+📋 Current attendance_log columns:
+- id (int)
+- nik (varchar(50))
+- full_name (varchar(100))
+- rfid_number (varchar(50))
+- picture (varchar(255))
+- attendance_date (date)
+- attendance_time (time)
+- is_matched (tinyint(1))
+- created_at (timestamp)
+
+✅ SUCCESS: 'is_matched' column exists.
