@@ -1,5 +1,6 @@
 import { dbHelpers } from "../config/database.js";
 import { emitDataChange } from "../utils/socketHelpers.js";
+import { batchSyncEmployeeShifts } from "./employeeController.js";
 
 /**
  * 🛠 GET OPTIONS FOR BATCH SETUP
@@ -118,22 +119,29 @@ export const batchUpdateEmployees = async (req, res) => {
         );
         ids = rows.map((r) => r.id);
       } else if (tType === "keyword") {
-        // value format: "field|keyword"
+        // value format: "field|match_type|keyword" OR "field|keyword" (backward compat)
         for (const val of rawIds) {
-          const [fieldVal, keyword] = val.split("|");
+          const parts = val.split("|");
+          const fieldVal = parts[0];
+          const matchType = parts.length === 3 ? parts[1] : "LIKE";
+          const keyword = parts.length === 3 ? parts[2] : parts[1];
+
           if (!fieldVal || !keyword) continue;
+
+          // Validate matchType to prevent SQL injection
+          const operator = matchType === "NOT LIKE" ? "NOT LIKE" : "LIKE";
 
           let query = "";
           let params = [`%${keyword}%`];
 
           if (fieldVal === "position_name") {
-            query = `SELECT e.id FROM employees e JOIN positions p ON e.position_id = p.id WHERE p.position_name LIKE ? AND e.deleted_at IS NULL`;
+            query = `SELECT e.id FROM employees e JOIN positions p ON e.position_id = p.id WHERE p.position_name ${operator} ? AND e.deleted_at IS NULL`;
           } else if (fieldVal === "dept_name") {
-            query = `SELECT e.id FROM employees e JOIN departments d ON e.department_id = d.id WHERE d.dept_name LIKE ? AND e.deleted_at IS NULL`;
+            query = `SELECT e.id FROM employees e JOIN departments d ON e.department_id = d.id WHERE d.dept_name ${operator} ? AND e.deleted_at IS NULL`;
           } else if (fieldVal === "full_name") {
-            query = `SELECT id FROM employees WHERE full_name LIKE ? AND deleted_at IS NULL`;
+            query = `SELECT id FROM employees WHERE full_name ${operator} ? AND deleted_at IS NULL`;
           } else if (fieldVal === "nik") {
-            query = `SELECT id FROM employees WHERE nik LIKE ? AND deleted_at IS NULL`;
+            query = `SELECT id FROM employees WHERE nik ${operator} ? AND deleted_at IS NULL`;
           }
 
           if (query) {
@@ -162,18 +170,21 @@ export const batchUpdateEmployees = async (req, res) => {
     // Handle Value (supports array or string)
     let processedValue = value;
     if (Array.isArray(value)) {
-      // For now, simple fields like department_id and employee_shift_id (FK) support only one value.
-      // We take the first selected value.
-      processedValue = value.length > 0 ? value[0] : null;
+      if (["department_id", "employee_shift_id"].includes(field)) {
+        // Multi-value fields: join into CSV
+        processedValue = value.join(",");
+      } else {
+        // Single-value fields: take the first
+        processedValue = value.length > 0 ? value[0] : null;
+      }
     }
 
     // Special logic for Shift Rules vs Setting Rules
     if (field === "employee_shift_id") {
       const { rule_type } = req.body;
       if (rule_type === "setting") {
-        processedValue = null; // Set to NULL to use Global Setting
+        processedValue = "setting"; // Marker for global settings in employees table cache
       }
-      // If rule_type is shift, processedValue is already set to the selected shift_id
     }
 
     const updateVal =
@@ -184,14 +195,22 @@ export const batchUpdateEmployees = async (req, res) => {
         ? null
         : processedValue;
 
+    let finalIdsForSync = [];
     if (isAll) {
       const [result] = await connection.query(
         `UPDATE employees SET ${field} = ? WHERE deleted_at IS NULL`,
         [updateVal],
       );
       affectedRows = result.affectedRows;
+
+      // Get all IDs for sync
+      const [allRows] = await connection.query(
+        "SELECT id FROM employees WHERE deleted_at IS NULL",
+      );
+      finalIdsForSync = allRows.map((r) => r.id);
     } else if (finalEmployeeIds.size > 0) {
       const idsArray = Array.from(finalEmployeeIds);
+      finalIdsForSync = idsArray;
       const [result] = await connection.query(
         `UPDATE employees SET ${field} = ? WHERE id IN (${idsArray.map(() => "?").join(",")})`,
         [updateVal, ...idsArray],
@@ -200,6 +219,12 @@ export const batchUpdateEmployees = async (req, res) => {
     }
 
     await connection.commit();
+
+    // After commit, sync shifts if it was the shift field
+    if (field === "employee_shift_id" && finalIdsForSync.length > 0) {
+      // processedValue here conveys the target CSV or "setting"
+      await batchSyncEmployeeShifts(finalIdsForSync, processedValue);
+    }
 
     emitDataChange("employees", "update", { field, count: affectedRows });
 

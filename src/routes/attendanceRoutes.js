@@ -9,6 +9,7 @@ import {
   createEmployeeShift,
   updateEmployeeShift,
   deleteEmployeeShift,
+  getEmployeeShiftAffectedCount,
   getAttendanceSettings,
   createAttendanceSetting,
   updateAttendanceSetting,
@@ -106,6 +107,10 @@ router.delete("/logs/:id", deleteAttendanceLog);
 
 // Employee Shifts
 router.get("/employee-shifts", getEmployeeShifts);
+router.get(
+  "/employee-shifts/:id/affected-count",
+  getEmployeeShiftAffectedCount,
+);
 router.post("/employee-shifts", createEmployeeShift);
 router.put("/employee-shifts/:id", updateEmployeeShift);
 router.delete("/employee-shifts/:id", deleteEmployeeShift);

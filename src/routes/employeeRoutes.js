@@ -14,6 +14,7 @@ import {
   createUserFromEmployee,
   autoCreateUsers,
   getEmployeeByRfid,
+  syncUserAccounts,
 } from "../controllers/employeeController.js";
 import { activityLogger } from "../middleware/activityLogger.js";
 
@@ -37,7 +38,12 @@ router.post(
   activityLogger.logModuleActivity("employees", "AUTO_CREATE_USERS"),
   autoCreateUsers,
 );
-// Configure Multer for Employee Pictures
+router.post(
+  "/sync-user-accounts",
+  activityLogger.logModuleActivity("employees", "SYNC_USER_ACCOUNTS"),
+  syncUserAccounts,
+);
+// Configure Multer for Employee Pictures (Disk Storage)
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
     const uploadPath = path.join(__dirname, "../../uploads/employees");
@@ -51,7 +57,7 @@ const storage = multer.diskStorage({
   },
 });
 
-const upload = multer({
+const uploadImage = multer({
   storage: storage,
   limits: { fileSize: 5 * 1024 * 1024 }, // 5MB limit
   fileFilter: (req, file, cb) => {
@@ -59,6 +65,23 @@ const upload = multer({
       cb(null, true);
     } else {
       cb(new Error("Only images are allowed"));
+    }
+  },
+});
+
+// Configure Multer for Excel Import (Memory Storage)
+const uploadExcel = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 10 * 1024 * 1024 }, // 10MB limit
+  fileFilter: (req, file, cb) => {
+    const allowedMimes = [
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      "application/vnd.ms-excel",
+    ];
+    if (allowedMimes.includes(file.mimetype)) {
+      cb(null, true);
+    } else {
+      cb(new Error("Only Excel files are allowed"));
     }
   },
 });
@@ -76,6 +99,7 @@ router.get("/template", async (req, res) => {
       { header: "branch_id", key: "branch_id", width: 10 },
       { header: "department_id", key: "department_id", width: 10 },
       { header: "position_id", key: "position_id", width: 10 },
+      { header: "location_id", key: "location_id", width: 10 },
       { header: "title_id", key: "title_id", width: 10 },
       { header: "employee_status", key: "employee_status", width: 15 },
       { header: "contract_count", key: "contract_count", width: 15 },
@@ -132,7 +156,7 @@ router.get(
 // CREATE new employee
 router.post(
   "/",
-  upload.single("picture"),
+  uploadImage.single("picture"),
   activityLogger.logModuleActivity("employees", "CREATE"),
   createEmployee,
 );
@@ -140,7 +164,7 @@ router.post(
 // UPDATE employee
 router.put(
   "/:id",
-  upload.single("picture"),
+  uploadImage.single("picture"),
   activityLogger.logModuleActivity("employees", "UPDATE"),
   updateEmployee,
 );
@@ -159,10 +183,128 @@ router.post(
   createUserFromEmployee,
 );
 
+// Helper for Date Parsing
+const parseDate = (val) => {
+  if (!val) return null;
+  if (val instanceof Date) return val;
+
+  // Handle Excel serial numbers (e.g. 45285)
+  if (typeof val === "number") {
+    // Excel base date is 1899-12-30
+    const date = new Date(Math.round((val - 25569) * 86400 * 1000));
+    return isNaN(date.getTime()) ? null : date;
+  }
+
+  const strVal = String(val).trim();
+  if (strVal === "") return null;
+
+  // Try DD/MM/YYYY or DD-MM-YYYY or DD/MM/YY
+  const dmyMatch = strVal.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})$/);
+  if (dmyMatch) {
+    let [_, day, month, year] = dmyMatch;
+    if (year.length === 2) year = "20" + year;
+    return new Date(`${year}-${month}-${day}`);
+  }
+
+  // Try YYYY-MM-DD
+  const ymdMatch = strVal.match(/^(\d{4})[\/\-](\d{1,2})[\/\-](\d{1,2})$/);
+  if (ymdMatch) {
+    return new Date(strVal);
+  }
+
+  // Fallback
+  const date = new Date(val);
+  return isNaN(date.getTime()) ? null : date;
+};
+
+// Helper for Normalization
+const normalizeValue = (val, map) => {
+  if (!val) return null;
+  return map[String(val).toLowerCase()] || val;
+};
+
+const RELIGION_MAP = {
+  islam: "Moslem",
+  muslim: "Moslem",
+  moslem: "Moslem",
+  kristen: "Christian",
+  christian: "Christian",
+  katolik: "Catholic",
+  catholic: "Catholic",
+  hindu: "Hindu",
+  budha: "Buddhist",
+  buddha: "Buddhist",
+  buddhist: "Buddhist",
+  khonghucu: "Konghucu",
+};
+
+const GENDER_MAP = {
+  "laki-laki": "Male",
+  pria: "Male",
+  male: "Male",
+  l: "Male",
+  perempuan: "Female",
+  wanita: "Female",
+  female: "Female",
+  p: "Female",
+};
+
+const MARITAL_MAP = {
+  menikah: "Married",
+  married: "Married",
+  "belum menikah": "Single",
+  single: "Single",
+  lajang: "Single",
+  cerai: "Divorced",
+  divorced: "Divorced",
+  janda: "Widow",
+  widow: "Widow",
+  duda: "Widower",
+  widower: "Widower",
+};
+
+// Helper to resolve Master Data (ID or Name)
+const resolveMasterData = (value, nameMap, idSet) => {
+  if (!value) return { value: null, isValid: true };
+
+  const strVal = String(value).trim();
+  if (strVal === "" || strVal === "0" || strVal.toLowerCase() === "null") {
+    return { value: null, isValid: true };
+  }
+
+  // Handle multiple values (comma separated)
+  const parts = strVal.split(",").map((p) => p.trim());
+  const resolvedIds = [];
+
+  for (const part of parts) {
+    if (part === "") continue;
+
+    // Check ID
+    if (idSet.has(part) || idSet.has(parseInt(part))) {
+      resolvedIds.push(part);
+      continue;
+    }
+
+    // Check Name
+    const lowerName = part.toLowerCase();
+    if (nameMap.has(lowerName)) {
+      resolvedIds.push(nameMap.get(lowerName));
+      continue;
+    }
+
+    // If one part is invalid, the whole field is invalid
+    return { value: value, isValid: false, failedPart: part };
+  }
+
+  if (resolvedIds.length === 0) return { value: null, isValid: true };
+
+  return { value: resolvedIds.join(","), isValid: true };
+};
+
 // POST import employees
-router.post("/import", upload.single("file"), async (req, res) => {
+router.post("/import", uploadExcel.single("file"), async (req, res) => {
   try {
-    const pool = getPool(); // Get pool instance
+    const pool = getPool();
     const workbook = new ExcelJS.Workbook();
     await workbook.xlsx.load(req.file.buffer);
 
@@ -171,24 +313,55 @@ router.post("/import", upload.single("file"), async (req, res) => {
 
     sheet.eachRow((row, rowIndex) => {
       if (rowIndex === 1) return;
-      rows.push(row.values.slice(1));
+      rows.push({ index: rowIndex, values: row.values.slice(1) });
     });
 
     console.log(`📊 Parsed ${rows.length} rows from Excel`);
 
-    let success = 0;
-    let failed = 0;
+    // 1. Fetch Master Data
+    // 1. Fetch Master Data
+    const [branches, departments, positions, titles, locations] =
+      await Promise.all([
+        pool.query("SELECT id, branch_name FROM branches"),
+        pool.query("SELECT id, dept_code FROM departments"),
+        pool.query("SELECT id, position_name FROM positions"),
+        pool.query("SELECT id, title_name FROM titles"),
+        pool.query("SELECT id, office_name FROM location"),
+      ]);
+
+    // Build Lookup Maps (Name -> ID and ID Set)
+    const createMaps = (data, nameField) => {
+      const nameMap = new Map();
+      const idSet = new Set();
+      data[0].forEach((item) => {
+        if (item[nameField]) {
+          nameMap.set(String(item[nameField]).toLowerCase(), item.id);
+        }
+        idSet.add(item.id);
+      });
+      return { nameMap, idSet };
+    };
+
+    const branchMaps = createMaps(branches, "branch_name");
+    const deptMaps = createMaps(departments, "dept_code");
+    const posMaps = createMaps(positions, "position_name");
+    const titleMaps = createMaps(titles, "title_name");
+    const locMaps = createMaps(locations, "office_name");
+
+    const validRows = [];
     const errors = [];
 
-    for (const r of rows) {
+    // 2. Validate & Normalize Rows
+    for (const { index, values } of rows) {
       const [
         full_name,
         nik,
         barcode,
-        branch_id,
-        department_id,
-        position_id,
-        title_id,
+        branch_val,
+        dept_val,
+        pos_val,
+        location_val,
+        title_val,
         employee_status,
         contract_count,
         join_date,
@@ -209,191 +382,299 @@ router.post("/import", upload.single("file"), async (req, res) => {
         bpjs_health,
         ktp_number,
         rfid_number,
-      ] = r;
+      ] = values;
 
-      // Normalize data
-      const parseDate = (val) => {
-        console.log(`[DEBUG] Parsing date value: "${val}" (${typeof val})`);
+      // Basic required check
+      if (!nik || !full_name) {
+        errors.push({
+          row: index,
+          field: "nik/full_name",
+          message: "NIK and Full Name are required",
+          data: values,
+        });
+        continue;
+      }
 
-        if (!val) return null;
-        if (val instanceof Date) return val;
+      // Resolve Master Data
+      const branchRes = resolveMasterData(
+        branch_val,
+        branchMaps.nameMap,
+        branchMaps.idSet,
+      );
+      // Branch usually single, but our resolver now handles comma-separated.
+      // If schema is INT, we hope it's single. If multi, it will return "3,4" which might fail INSERT if INT.
+      // But user requested multi-value logic for dept/pos/loc.
+      if (!branchRes.isValid) {
+        errors.push({
+          row: index,
+          field: "branch_id",
+          message: `Branch '${branchRes.failedPart || branch_val}' not found`,
+          data: values,
+        });
+        continue;
+      }
 
-        // Handle Excel serial numbers (e.g. 45285)
-        if (typeof val === "number") {
-          // Excel base date is 1899-12-30
-          const date = new Date(Math.round((val - 25569) * 86400 * 1000));
-          return isNaN(date.getTime()) ? null : date;
-        }
+      const deptRes = resolveMasterData(
+        dept_val,
+        deptMaps.nameMap,
+        deptMaps.idSet,
+      );
+      if (!deptRes.isValid) {
+        errors.push({
+          row: index,
+          field: "department_id",
+          message: `Department '${deptRes.failedPart || dept_val}' not found`,
+          data: values,
+        });
+        continue;
+      }
 
-        const strVal = String(val).trim();
-        if (strVal === "") return null;
+      const posRes = resolveMasterData(pos_val, posMaps.nameMap, posMaps.idSet);
+      if (!posRes.isValid) {
+        errors.push({
+          row: index,
+          field: "position_id",
+          message: `Position '${posRes.failedPart || pos_val}' not found`,
+          data: values,
+        });
+        continue;
+      }
 
-        // Try DD/MM/YYYY or DD-MM-YYYY or DD/MM/YY
-        const dmyMatch = strVal.match(
-          /^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})$/,
-        );
-        if (dmyMatch) {
-          let [_, day, month, year] = dmyMatch;
-          // Handle 2 digit year
-          if (year.length === 2) {
-            year = "20" + year;
-          }
-          return new Date(`${year}-${month}-${day}`);
-        }
+      const locRes = resolveMasterData(
+        location_val,
+        locMaps.nameMap,
+        locMaps.idSet,
+      );
+      if (!locRes.isValid) {
+        errors.push({
+          row: index,
+          field: "location_id",
+          message: `Location '${locRes.failedPart || location_val}' not found`,
+          data: values,
+        });
+        continue;
+      }
 
-        // Try YYYY-MM-DD
-        const ymdMatch = strVal.match(
-          /^(\d{4})[\/\-](\d{1,2})[\/\-](\d{1,2})$/,
-        );
-        if (ymdMatch) {
-          return new Date(strVal);
-        }
+      const titleRes = resolveMasterData(
+        title_val,
+        titleMaps.nameMap,
+        titleMaps.idSet,
+      );
+      if (!titleRes.isValid) {
+        errors.push({
+          row: index,
+          field: "title_id",
+          message: `Title '${titleRes.failedPart || title_val}' not found`,
+          data: values,
+        });
+        continue;
+      }
 
-        // Fallback to standard date parsing
-        const date = new Date(val);
-        if (isNaN(date.getTime())) {
-          console.warn(`[WARN] Failed to parse date: "${val}"`);
-          return null;
-        }
-        return date;
-      };
+      // If all valid, prepare object
+      validRows.push({
+        originalValues: values,
+        normalized: {
+          full_name,
+          nik: String(nik).trim(),
+          barcode,
+          branch_id: branchRes.value,
+          department_id: deptRes.value,
+          position_id: posRes.value,
+          location_id: locRes.value,
+          title_id: titleRes.value,
+          employee_status,
+          contract_count: contract_count || 0,
+          join_date: parseDate(join_date),
+          effective_date: parseDate(effective_date),
+          end_effective_date: parseDate(end_effective_date),
+          resign_date_rehire: parseDate(resign_date_rehire),
+          religion: normalizeValue(religion, RELIGION_MAP),
+          gender: normalizeValue(gender, GENDER_MAP),
+          marital_status: normalizeValue(marital_status, MARITAL_MAP),
+          place_of_birth,
+          date_of_birth: parseDate(date_of_birth),
+          address,
+          phone,
+          office_email,
+          personal_email,
+          npwp,
+          bpjs_tk,
+          bpjs_health,
+          ktp_number,
+          rfid_number,
+        },
+      });
+    }
 
-      const normalizeReligion = (val) => {
-        if (!val) return null;
-        const map = {
-          islam: "Moslem",
-          muslim: "Moslem",
-          moslem: "Moslem",
-          kristen: "Christian",
-          christian: "Christian",
-          katolik: "Catholic",
-          catholic: "Catholic",
-          hindu: "Hindu",
-          budha: "Buddhist",
-          buddha: "Buddhist",
-          buddhist: "Buddhist",
-        };
-        return map[String(val).toLowerCase()] || val;
-      };
+    // 3. Duplicate Check
+    const niks = validRows.map((r) => r.normalized.nik);
+    let existingNiks = new Set();
 
-      const normalizeGender = (val) => {
-        if (!val) return null;
-        const map = {
-          "laki-laki": "Male",
-          pria: "Male",
-          male: "Male",
-          l: "Male",
-          perempuan: "Female",
-          wanita: "Female",
-          female: "Female",
-          p: "Female",
-        };
-        return map[String(val).toLowerCase()] || val;
-      };
+    if (niks.length > 0) {
+      const [rows] = await pool.query(
+        "SELECT nik FROM employees WHERE nik IN (?)",
+        [niks],
+      );
+      rows.forEach((r) => existingNiks.add(r.nik));
+    }
 
-      const normalizeMaritalStatus = (val) => {
-        if (!val) return null;
-        const map = {
-          menikah: "Married",
-          married: "Married",
-          "belum menikah": "Single",
-          single: "Single",
-          lajang: "Single",
-          cerai: "Divorced",
-          divorced: "Divorced",
-          janda: "Widow",
-          widow: "Widow",
-          duda: "Widower",
-          widower: "Widower",
-        };
-        return map[String(val).toLowerCase()] || val;
-      };
+    const toInsert = [];
+    const duplicates = [];
+    const success_data = [];
 
-      const normalizedReligion = normalizeReligion(religion);
-      const normalizedGender = normalizeGender(gender);
-      const normalizedMaritalStatus = normalizeMaritalStatus(marital_status);
-
-      // Parse dates
-      const parsedJoinDate = parseDate(join_date);
-      const parsedEffectiveDate = parseDate(effective_date);
-      const parsedEndEffectiveDate = parseDate(end_effective_date);
-      const parsedResignDate = parseDate(resign_date_rehire);
-      const parsedDOB = parseDate(date_of_birth);
-
-      try {
-        await pool.query(
-          `INSERT INTO employees (
-            full_name,
-            nik,
-            barcode,
-            branch_id,
-            department_id,
-            position_id,
-            title_id,
-            employee_status,
-            contract_count,
-            join_date,
-            effective_date,
-            end_effective_date,
-            resign_date_rehire,
-            religion,
-            gender,
-            marital_status,
-            place_of_birth,
-            date_of_birth,
-            address,
-            phone,
-            office_email,
-            personal_email,
-            npwp,
-            bpjs_tk,
-            bpjs_health,
-            ktp_number,
-            rfid_number
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-          [
-            full_name,
-            nik,
-            barcode,
-            branch_id,
-            department_id,
-            position_id,
-            title_id,
-            employee_status,
-            contract_count,
-            parsedJoinDate,
-            parsedEffectiveDate,
-            parsedEndEffectiveDate,
-            parsedResignDate,
-            normalizedReligion,
-            normalizedGender,
-            normalizedMaritalStatus,
-            place_of_birth,
-            parsedDOB,
-            address,
-            phone,
-            office_email,
-            personal_email,
-            npwp,
-            bpjs_tk,
-            bpjs_health,
-            ktp_number,
-            rfid_number,
-          ],
-        );
-
-        success++;
-      } catch (err) {
-        console.error("❌ Error inserting row:", r, err.message);
-        errors.push({ row: r, error: err.message });
-        failed++;
+    for (const r of validRows) {
+      if (existingNiks.has(r.normalized.nik)) {
+        duplicates.push({
+          row_data: r.normalized,
+          reason: "NIK already exists",
+        });
+      } else {
+        toInsert.push(r.normalized);
       }
     }
 
-    res.json({ success, failed, errors });
+    // 4. Batch Insert Valid Rows
+    let success = 0;
+    if (toInsert.length > 0) {
+      // We process one by one to ensure robust error handling per row even in validation pass
+      // Or we can simple loop insert
+      for (const emp of toInsert) {
+        try {
+          await pool.query(
+            `INSERT INTO employees (
+              full_name, nik, barcode, branch_id, department_id, position_id, location_id, title_id,
+              employee_status, contract_count, join_date, effective_date, end_effective_date,
+              resign_date_rehire, religion, gender, marital_status, place_of_birth,
+              date_of_birth, address, phone, office_email, personal_email, npwp,
+              bpjs_tk, bpjs_health, ktp_number, rfid_number
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [
+              emp.full_name,
+              emp.nik,
+              emp.barcode,
+              emp.branch_id,
+              emp.department_id,
+              emp.position_id,
+              emp.location_id,
+              emp.title_id,
+              emp.employee_status,
+              emp.contract_count,
+              emp.join_date,
+              emp.effective_date,
+              emp.end_effective_date,
+              emp.resign_date_rehire,
+              emp.religion,
+              emp.gender,
+              emp.marital_status,
+              emp.place_of_birth,
+              emp.date_of_birth,
+              emp.address,
+              emp.phone,
+              emp.office_email,
+              emp.personal_email,
+              emp.npwp,
+              emp.bpjs_tk,
+              emp.bpjs_health,
+              emp.ktp_number,
+              emp.rfid_number,
+            ],
+          );
+          success++;
+          success_data.push(emp);
+        } catch (err) {
+          console.error("❌ DB Insert Error:", err.message);
+          // Could be barcode duplicate or other unique constraints
+          errors.push({
+            row: -1,
+            field: "database",
+            message: err.message,
+            data: emp,
+          });
+        }
+      }
+    }
+
+    res.json({
+      success_count: success,
+      failed_count: errors.length,
+      duplicate_count: duplicates.length,
+      success_data: success_data,
+      errors: errors,
+      duplicates: duplicates,
+    });
   } catch (err) {
     console.log(err);
     res.status(500).json({ message: "Failed import", error: err.message });
+  }
+});
+
+// POST Bulk Update Employees (for duplicate handling)
+router.post("/bulk-update", async (req, res) => {
+  try {
+    const { employees } = req.body;
+    if (!employees || !Array.isArray(employees) || employees.length === 0) {
+      return res
+        .status(400)
+        .json({ message: "No employees provided for update" });
+    }
+
+    const pool = getPool();
+    let updated = 0;
+    const errors = [];
+
+    for (const emp of employees) {
+      try {
+        // Prepare update query dynamically or hardcoded for all fields
+        await pool.query(
+          `UPDATE employees SET
+            full_name = ?, barcode = ?, branch_id = ?, department_id = ?, position_id = ?, location_id = ?, title_id = ?,
+            employee_status = ?, contract_count = ?, join_date = ?, effective_date = ?, end_effective_date = ?,
+            resign_date_rehire = ?, religion = ?, gender = ?, marital_status = ?, place_of_birth = ?,
+            date_of_birth = ?, address = ?, phone = ?, office_email = ?, personal_email = ?, npwp = ?,
+            bpjs_tk = ?, bpjs_health = ?, ktp_number = ?, rfid_number = ?
+           WHERE nik = ?`,
+          [
+            emp.full_name,
+            emp.barcode,
+            emp.branch_id,
+            emp.department_id,
+            emp.position_id,
+            emp.location_id,
+            emp.title_id,
+            emp.employee_status,
+            emp.contract_count,
+            emp.join_date ? new Date(emp.join_date) : null,
+            emp.effective_date ? new Date(emp.effective_date) : null,
+            emp.end_effective_date ? new Date(emp.end_effective_date) : null,
+            emp.resign_date_rehire ? new Date(emp.resign_date_rehire) : null,
+            emp.religion,
+            emp.gender,
+            emp.marital_status,
+            emp.place_of_birth,
+            emp.date_of_birth ? new Date(emp.date_of_birth) : null,
+            emp.address,
+            emp.phone,
+            emp.office_email,
+            emp.personal_email,
+            emp.npwp,
+            emp.bpjs_tk,
+            emp.bpjs_health,
+            emp.ktp_number,
+            emp.rfid_number,
+            emp.nik, // Where cluse
+          ],
+        );
+        updated++;
+      } catch (err) {
+        console.error("❌ Update Error:", emp.nik, err.message);
+        errors.push({ nik: emp.nik, error: err.message });
+      }
+    }
+
+    res.json({ success: true, updated_count: updated, errors });
+  } catch (err) {
+    console.error("Bulk update failed:", err);
+    res.status(500).json({ message: "Bulk update failed", error: err.message });
   }
 });
 

@@ -713,9 +713,9 @@ export const createUserFromEmployee = async (req, res) => {
 
       const newUserId = userResult.insertId;
 
-      // Update employee with user_id
+      // Update employee with user_id (using username/nik as per user request)
       await connection.query("UPDATE employees SET user_id = ? WHERE id = ?", [
-        newUserId,
+        employee.nik,
         id,
       ]);
 
@@ -730,7 +730,7 @@ export const createUserFromEmployee = async (req, res) => {
 
       // Emit socket
       emitDataChange("users", "create", newUser);
-      emitDataChange("employees", "update", { id, user_id: newUserId });
+      emitDataChange("employees", "update", { id, user_id: employee.nik });
 
       res.status(201).json({
         success: true,
@@ -846,10 +846,10 @@ export const autoCreateUsers = async (req, res) => {
 
         const newUserId = userResult.insertId;
 
-        // Update employee
+        // Update employee (using username/nik as per user request)
         await connection.query(
           "UPDATE employees SET user_id = ? WHERE id = ?",
-          [newUserId, emp.id],
+          [emp.nik, emp.id],
         );
 
         createdCount++;
@@ -882,89 +882,220 @@ export const autoCreateUsers = async (req, res) => {
   }
 };
 
-/**
- * 🔄 SYNC EMPLOYEE SHIFTS
- * Syncs employees.employee_shift_id (string) to attendance_employee_shift table
- */
 export const syncEmployeeShifts = async (employeeId, shiftIdsString) => {
   try {
-    const shiftIds = shiftIdsString
-      ? shiftIdsString
-          .split(",")
-          .map((id) => id.trim())
-          .filter((id) => id)
-      : [];
+    const pool = await dbHelpers.getPool();
 
-    // Get current active shifts for this employee
-    const currentAssignments = await dbHelpers.query(
-      "SELECT id, shift_id FROM attendance_employee_shift WHERE target_type = 'user' AND target_value = ? AND (is_deleted IS NULL OR is_deleted = 0)",
-      [employeeId],
+    // 1. Get NIK for the employee
+    const [emp] = await pool.query("SELECT nik FROM employees WHERE id = ?", [
+      employeeId,
+    ]);
+    if (!emp || emp.length === 0) return;
+    const nik = emp[0].nik;
+
+    // 2. Determine rule_type and final shift_id string
+    const isSetting = shiftIdsString === "setting";
+    const ruleType = isSetting ? "setting" : "shift";
+    const finalShiftId = isSetting ? null : shiftIdsString || null;
+
+    // 3. Fetch any existing active 'user' assignment for this employee
+    const [existing] = await pool.query(
+      "SELECT id FROM attendance_employee_shift WHERE target_type = 'user' AND (employee_id = ? OR nik = ? OR target_value = ?) AND (is_deleted IS NULL OR is_deleted = 0) LIMIT 1",
+      [employeeId, nik, employeeId],
     );
 
-    const currentShiftIds = currentAssignments.map((a) => String(a.shift_id));
-
-    // 1. Add new assignments
-    for (const sid of shiftIds) {
-      if (!currentShiftIds.includes(String(sid))) {
-        await dbHelpers.execute(
-          "INSERT INTO attendance_employee_shift (target_type, target_value, rule_type, shift_id, start_date) VALUES (?, ?, ?, ?, ?)",
-          [
-            "user",
-            employeeId,
-            "shift",
-            sid,
-            new Date().toISOString().split("T")[0],
-          ],
-        );
-      }
+    if (existing && existing.length > 0) {
+      // Update existing record
+      await pool.query(
+        "UPDATE attendance_employee_shift SET employee_id = ?, nik = ?, rule_type = ?, shift_id = ?, updated_at = NOW() WHERE id = ?",
+        [employeeId, nik, ruleType, finalShiftId, existing[0].id],
+      );
+    } else if (shiftIdsString) {
+      // Create new record
+      await pool.query(
+        "INSERT INTO attendance_employee_shift (target_type, target_value, employee_id, nik, rule_type, shift_id, start_date) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        [
+          "user",
+          employeeId,
+          employeeId,
+          nik,
+          ruleType,
+          finalShiftId,
+          new Date().toISOString().split("T")[0],
+        ],
+      );
     }
 
-    // 2. Remove (soft delete) assignments no longer in the list
-    for (const assignment of currentAssignments) {
-      if (!shiftIds.includes(String(assignment.shift_id))) {
-        await dbHelpers.execute(
-          "UPDATE attendance_employee_shift SET is_deleted = 1, deleted_at = NOW() WHERE id = ?",
-          [assignment.id],
-        );
-      }
+    // 4. Clean up any other duplicate active assignments (legacy)
+    if (existing && existing.length > 0) {
+      await pool.query(
+        "UPDATE attendance_employee_shift SET is_deleted = 1, deleted_at = NOW() WHERE target_type = 'user' AND (employee_id = ? OR nik = ? OR target_value = ?) AND id != ? AND (is_deleted IS NULL OR is_deleted = 0)",
+        [employeeId, nik, employeeId, existing[0].id],
+      );
     }
 
-    console.log(
-      `✅ Synced shifts for employee ${employeeId}: ${shiftIdsString}`,
-    );
+    // 5. Update the employees table cache
+    await syncEmployeeShiftCache(employeeId);
   } catch (error) {
-    console.error(
-      `❌ Failed to sync shifts for employee ${employeeId}:`,
-      error,
-    );
+    console.error(`❌ Failed to sync shifts for ${employeeId}:`, error);
   }
 };
 
 /**
- * 🔄 SYNC EMPLOYEES CACHE FROM ATTENDANCE SHIFT
- * Re-calculates employee_shift_id for an employee based on attendance_employee_shift table
+ * 🚀 BATCH SYNC EMPLOYEE SHIFTS
+ * Efficiently syncs multiple employees to attendance_employee_shift table
  */
+export const batchSyncEmployeeShifts = async (employeeIds, shiftIdsString) => {
+  if (!employeeIds || employeeIds.length === 0) return;
+
+  try {
+    const pool = await dbHelpers.getPool();
+    const isSetting = shiftIdsString === "setting";
+    const ruleType = isSetting ? "setting" : "shift";
+    const finalShiftId = isSetting ? null : shiftIdsString || null;
+    const today = new Date().toISOString().split("T")[0];
+
+    // Get NIKs for all employees
+    const [emps] = await pool.query(
+      `SELECT id, nik FROM employees WHERE id IN (${employeeIds.map(() => "?").join(",")})`,
+      employeeIds,
+    );
+    const nikMap = new Map();
+    emps.forEach((e) => nikMap.set(String(e.id), e.nik));
+
+    for (const empId of employeeIds) {
+      const nik = nikMap.get(String(empId));
+      if (!nik) continue;
+
+      const [existing] = await pool.query(
+        "SELECT id FROM attendance_employee_shift WHERE target_type = 'user' AND (employee_id = ? OR nik = ? OR target_value = ?) AND (is_deleted IS NULL OR is_deleted = 0) LIMIT 1",
+        [empId, nik, empId],
+      );
+
+      if (existing && existing.length > 0) {
+        await pool.query(
+          "UPDATE attendance_employee_shift SET employee_id = ?, nik = ?, rule_type = ?, shift_id = ?, updated_at = NOW() WHERE id = ?",
+          [empId, nik, ruleType, finalShiftId, existing[0].id],
+        );
+        // Clean up legacy duplicates
+        await pool.query(
+          "UPDATE attendance_employee_shift SET is_deleted = 1, deleted_at = NOW() WHERE target_type = 'user' AND (employee_id = ? OR nik = ? OR target_value = ?) AND id != ? AND (is_deleted IS NULL OR is_deleted = 0)",
+          [empId, nik, empId, existing[0].id],
+        );
+      } else if (shiftIdsString) {
+        await pool.query(
+          "INSERT INTO attendance_employee_shift (target_type, target_value, employee_id, nik, rule_type, shift_id, start_date) VALUES (?, ?, ?, ?, ?, ?, ?)",
+          ["user", empId, empId, nik, ruleType, finalShiftId, today],
+        );
+      }
+
+      // Update cache
+      await syncEmployeeShiftCache(empId);
+    }
+    console.log(`✅ Batch synced shifts for ${employeeIds.length} employees`);
+  } catch (error) {
+    console.error("❌ Batch shift sync failed:", error);
+  }
+};
+
 export const syncEmployeeShiftCache = async (employeeId) => {
   try {
-    const assignments = await dbHelpers.query(
-      "SELECT shift_id FROM attendance_employee_shift WHERE target_type = 'user' AND target_value = ? AND (is_deleted IS NULL OR is_deleted = 0)",
+    const pool = await dbHelpers.getPool();
+
+    // 1. Fetch employee organizational info
+    const [empRows] = await pool.query(
+      `SELECT e.id, e.nik, e.department_id, e.branch_id, e.location_id, e.position_id, u.role_id 
+       FROM employees e 
+       LEFT JOIN users u ON e.user_id = u.id 
+       WHERE e.id = ?`,
       [employeeId],
     );
 
-    const shiftIds = assignments.map((a) => a.shift_id).join(",");
+    if (empRows.length === 0) return;
+    const emp = empRows[0];
 
-    await dbHelpers.execute(
+    // 2. Fetch all active assignments (direct or group)
+    const [rows] = await pool.query(
+      `SELECT rule_type, shift_id FROM attendance_employee_shift 
+       WHERE (is_deleted IS NULL OR is_deleted = 0)
+       AND (
+         target_type = 'all'
+         OR (target_type = 'user' AND (employee_id = ? OR nik = ? OR FIND_IN_SET(?, target_value) OR FIND_IN_SET(?, target_value)))
+         OR (target_type = 'department' AND FIND_IN_SET(?, target_value))
+         OR (target_type = 'branch' AND FIND_IN_SET(?, target_value))
+         OR (target_type = 'location' AND FIND_IN_SET(?, target_value))
+         OR (target_type = 'position' AND FIND_IN_SET(?, target_value))
+         OR (target_type = 'role' AND FIND_IN_SET(?, target_value))
+       )`,
+      [
+        emp.id,
+        emp.nik,
+        emp.id,
+        emp.nik,
+        emp.department_id,
+        emp.branch_id,
+        emp.location_id,
+        emp.position_id,
+        emp.role_id,
+      ],
+    );
+
+    // 3. Aggregate shifts and setting marker
+    const allShiftIds = new Set();
+    rows.forEach((r) => {
+      if (r.rule_type === "setting") {
+        allShiftIds.add("setting");
+      }
+      if (r.shift_id && typeof r.shift_id === "string") {
+        r.shift_id
+          .split(",")
+          .map((id) => id.trim())
+          .filter((id) => id)
+          .forEach((id) => allShiftIds.add(id));
+      } else if (r.shift_id) {
+        allShiftIds.add(String(r.shift_id));
+      }
+    });
+
+    const shiftIdsString = Array.from(allShiftIds).join(",");
+
+    await pool.query(
       "UPDATE employees SET employee_shift_id = ? WHERE id = ?",
-      [shiftIds || null, employeeId],
+      [shiftIdsString || null, employeeId],
     );
 
     console.log(
-      `✅ Updated employee_shift_id cache for ${employeeId}: ${shiftIds}`,
+      `✅ Updated employee_shift_id cache for ${employeeId}: ${shiftIdsString}`,
     );
   } catch (error) {
     console.error(
       `❌ Failed to update employee_shift_id cache for ${employeeId}:`,
       error,
     );
+  }
+};
+/**
+ * SYNC USER ACCOUNTS
+ * Matches employees.nik with users.username and updates employees.user_id
+ */
+export const syncUserAccounts = async (req, res) => {
+  try {
+    const result = await dbHelpers.execute(`
+      UPDATE employees e
+      JOIN users u ON e.nik = u.username
+      SET e.user_id = u.username
+      WHERE (e.user_id IS NULL OR e.user_id != u.username)
+      AND e.deleted_at IS NULL
+      AND u.deleted_at IS NULL
+    `);
+
+    res.json({
+      success: true,
+      message: "Synchronization completed",
+      syncedCount: result.affectedRows,
+    });
+  } catch (error) {
+    console.error("❌ Error syncing user accounts:", error);
+    res.status(500).json({ error: "Failed to sync user accounts" });
   }
 };

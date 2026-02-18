@@ -63,6 +63,12 @@ export const createAttendanceCode = async (req, res) => {
       req.body,
     );
 
+    // Emit socket event for real-time update
+    emitDataChange("attendance_codes", "create", {
+      id: result.insertId,
+      ...req.body,
+    });
+
     res.status(201).json({ id: result.insertId, code_id, code, detail });
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -97,6 +103,9 @@ export const updateAttendanceCode = async (req, res) => {
       req.body,
     );
 
+    // Emit socket event for real-time update
+    emitDataChange("attendance_codes", "update", { id });
+
     res.json({ message: "Attendance code updated successfully" });
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -130,6 +139,9 @@ export const deleteAttendanceCode = async (req, res) => {
       null,
     );
 
+    // Emit socket event for real-time update
+    emitDataChange("attendance_codes", "delete", { id });
+
     res.json({ message: "Attendance code deleted successfully" });
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -143,16 +155,51 @@ export const getEmployeeShifts = async (req, res) => {
   try {
     const pool = getPool();
     const [rows] = await pool.query(`
-      SELECT aes.*, e.full_name, s.shift_name, s.shift_code 
+      SELECT aes.*, e.full_name, e.nik as employee_nik
       FROM attendance_employee_shift aes
-      LEFT JOIN employees e ON aes.target_type = 'user' AND (aes.target_value = e.id OR aes.target_value = e.nik)
-      LEFT JOIN attendance_shifts s ON aes.shift_id = s.shift_id
+      LEFT JOIN employees e ON aes.employee_id = e.id OR (aes.target_type = 'user' AND (aes.target_value = e.id OR aes.target_value = e.nik))
       WHERE aes.is_deleted IS NULL OR aes.is_deleted = 0
     `);
-    res.json(rows);
+
+    // Fetch all shifts to map names efficiently
+    const [shifts] = await pool.query(
+      "SELECT shift_id, shift_name, shift_code FROM attendance_shifts",
+    );
+    const shiftMap = shifts.reduce((acc, s) => {
+      acc[s.shift_id] = s;
+      return acc;
+    }, {});
+
+    // Map shift names for comma-separated IDs
+    const enrichedRows = rows.map((row) => {
+      if (
+        row.shift_id &&
+        typeof row.shift_id === "string" &&
+        row.shift_id.includes(",")
+      ) {
+        const ids = row.shift_id.split(",").map((id) => id.trim());
+        const names = ids
+          .map((id) => shiftMap[id]?.shift_name || id)
+          .join(", ");
+        const codes = ids
+          .map((id) => shiftMap[id]?.shift_code || "")
+          .filter((c) => c)
+          .join(", ");
+        return { ...row, shift_name: names, shift_code: codes };
+      } else if (row.shift_id) {
+        const s = shiftMap[row.shift_id];
+        return {
+          ...row,
+          shift_name: s?.shift_name || row.shift_id,
+          shift_code: s?.shift_code || "",
+        };
+      }
+      return { ...row, shift_name: "", shift_code: "" };
+    });
+
+    res.json(enrichedRows);
   } catch (error) {
     console.error("❌ Error in getEmployeeShifts:", error);
-    console.error("Error stack:", error.stack);
     res.status(500).json({ error: error.message });
   }
 };
@@ -170,50 +217,101 @@ export const createEmployeeShift = async (req, res) => {
     } = req.body;
 
     // Validate required fields
-    // Note: target_value can be empty when target_type is 'all'
     if (!target_type || !rule_type || !start_date) {
-      console.error("❌ Missing required fields");
       return res.status(400).json({
         error: "Missing required fields: target_type, rule_type, start_date",
       });
     }
 
-    // Validate target_value is provided for non-'all' types
     if (target_type !== "all" && !target_value) {
-      console.error(
-        "❌ target_value is required when target_type is not 'all'",
-      );
       return res.status(400).json({
         error: "target_value is required when target_type is not 'all'",
       });
     }
 
     const pool = getPool();
-    const shiftIds =
+
+    // 1. Normalize Shift IDs to a single comma-separated string
+    const normalizedShiftId =
       rule_type === "shift" && shift_id
-        ? String(shift_id)
-            .split(",")
-            .map((id) => id.trim())
-            .filter((id) => id)
-        : [null];
+        ? Array.isArray(shift_id)
+          ? shift_id.join(",")
+          : String(shift_id)
+              .split(",")
+              .map((s) => s.trim())
+              .filter((s) => s)
+              .join(",")
+        : null;
 
     const createdIds = [];
-    for (const sid of shiftIds) {
+
+    // 2. Process based on target_type
+    if (target_type === "user") {
+      // Split multiple user IDs/NIKs
+      const targetIds = String(target_value)
+        .split(",")
+        .map((v) => v.trim())
+        .filter((v) => v);
+
+      for (const tid of targetIds) {
+        // Fetch specific employee info
+        const [empRows] = await pool.query(
+          "SELECT id, nik FROM employees WHERE id = ? OR nik = ? LIMIT 1",
+          [tid, tid],
+        );
+
+        const employee_id = empRows.length > 0 ? empRows[0].id : null;
+        const nik = empRows.length > 0 ? empRows[0].nik : null;
+
+        const [result] = await pool.query(
+          "INSERT INTO attendance_employee_shift (employee_id, nik, target_type, target_value, rule_type, shift_id, start_date, end_date) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+          [
+            employee_id,
+            nik,
+            "user",
+            tid,
+            rule_type || "shift",
+            normalizedShiftId,
+            start_date,
+            end_date || null,
+          ],
+        );
+        createdIds.push(result.insertId);
+
+        // Sync cache
+        if (employee_id) {
+          await updateEmployeeShiftCache(employee_id);
+        }
+      }
+    } else {
       const [result] = await pool.query(
         "INSERT INTO attendance_employee_shift (target_type, target_value, rule_type, shift_id, start_date, end_date) VALUES (?, ?, ?, ?, ?, ?)",
         [
-          target_type || "user",
+          target_type,
           target_type === "all" ? "all" : target_value,
           rule_type || "shift",
-          sid,
+          normalizedShiftId,
           start_date,
           end_date || null,
         ],
       );
       createdIds.push(result.insertId);
+
+      // Sync cache for all affected employees
+      const employeeIds = await resolveEmployeeIds(target_type, target_value);
+      for (const eid of employeeIds) {
+        await updateEmployeeShiftCache(eid);
+      }
     }
 
-    console.log("✅ Employee shift created successfully, ID:", createdIds);
+    console.log("✅ Employee shift created successfully, IDs:", createdIds);
+
+    // Emit socket event for real-time update
+    emitDataChange("employee_shifts", "create", {
+      ids: createdIds,
+      target_type,
+      target_value,
+    });
 
     await logActivity(
       req,
@@ -225,19 +323,9 @@ export const createEmployeeShift = async (req, res) => {
       req.body,
     );
 
-    // Sync back to employee cache if target is user
-    if (target_type === "user") {
-      const targetIds = target_value.split(",");
-      for (const tid of targetIds) {
-        await updateEmployeeShiftCache(tid.trim());
-      }
-    }
-
     res.status(201).json({ ids: createdIds, ...req.body });
   } catch (error) {
     console.error("❌ Error in createEmployeeShift:", error);
-    console.error("Error stack:", error.stack);
-    console.error("Request body:", req.body);
     res.status(500).json({ error: error.message });
   }
 };
@@ -254,13 +342,6 @@ export const updateEmployeeShift = async (req, res) => {
       end_date,
     } = req.body;
     const pool = getPool();
-    const shiftIds =
-      rule_type === "shift" && shift_id
-        ? String(shift_id)
-            .split(",")
-            .map((id) => id.trim())
-            .filter((id) => id)
-        : [null];
 
     const [oldRows] = await pool.query(
       "SELECT * FROM attendance_employee_shift WHERE id = ?",
@@ -268,36 +349,47 @@ export const updateEmployeeShift = async (req, res) => {
     );
     const oldValues = oldRows[0];
 
-    // Update the existing record with the FIRST shift ID
+    // Normalize shift IDs
+    const normalizedShiftId =
+      rule_type === "shift" && shift_id
+        ? Array.isArray(shift_id)
+          ? shift_id.join(",")
+          : String(shift_id)
+              .split(",")
+              .map((s) => s.trim())
+              .filter((s) => s)
+              .join(",")
+        : null;
+
+    // Fetch employee data if it's 'user' type
+    let empId = oldValues?.employee_id || null;
+    let empNik = oldValues?.nik || null;
+
+    if (target_type === "user") {
+      const [empRows] = await pool.query(
+        "SELECT id, nik FROM employees WHERE id = ? OR nik = ? LIMIT 1",
+        [target_value, target_value],
+      );
+      if (empRows.length > 0) {
+        empId = empRows[0].id;
+        empNik = empRows[0].nik;
+      }
+    }
+
     await pool.query(
-      "UPDATE attendance_employee_shift SET target_type = ?, target_value = ?, rule_type = ?, shift_id = ?, start_date = ?, end_date = ? WHERE id = ?",
+      "UPDATE attendance_employee_shift SET employee_id = ?, nik = ?, target_type = ?, target_value = ?, rule_type = ?, shift_id = ?, start_date = ?, end_date = ? WHERE id = ?",
       [
+        empId,
+        empNik,
         target_type || "user",
         target_type === "all" ? "all" : target_value,
         rule_type || "shift",
-        shiftIds[0],
+        normalizedShiftId,
         start_date,
         end_date || null,
         id,
       ],
     );
-
-    // If there are MORE shift IDs, create NEW records for them
-    const createdIds = [id];
-    for (let i = 1; i < shiftIds.length; i++) {
-      const [result] = await pool.query(
-        "INSERT INTO attendance_employee_shift (target_type, target_value, rule_type, shift_id, start_date, end_date) VALUES (?, ?, ?, ?, ?, ?)",
-        [
-          target_type || "user",
-          target_type === "all" ? "all" : target_value,
-          rule_type || "shift",
-          shiftIds[i],
-          start_date,
-          end_date || null,
-        ],
-      );
-      createdIds.push(result.insertId);
-    }
 
     await logActivity(
       req,
@@ -309,29 +401,42 @@ export const updateEmployeeShift = async (req, res) => {
       req.body,
     );
 
-    // Sync back to employee cache if target is user or was user
-    if (
-      target_type === "user" ||
-      (oldValues && oldValues.target_type === "user")
-    ) {
-      const allTargetIds = new Set();
-      if (target_type === "user")
-        target_value.split(",").forEach((v) => allTargetIds.add(v.trim()));
-      if (oldValues && oldValues.target_type === "user")
-        allTargetIds.add(String(oldValues.target_value));
+    // Sync cache
+    if (target_type === "user") {
+      if (empId) {
+        await updateEmployeeShiftCache(empId);
+      }
+      if (
+        oldValues &&
+        oldValues.employee_id &&
+        oldValues.employee_id !== empId
+      ) {
+        await updateEmployeeShiftCache(oldValues.employee_id);
+      }
+    } else {
+      // Sync for group targets (old and new)
+      const oldEmpIds = await resolveEmployeeIds(
+        oldValues.target_type,
+        oldValues.target_value,
+      );
+      const newEmpIds = await resolveEmployeeIds(target_type, target_value);
 
-      for (const tid of allTargetIds) {
-        await updateEmployeeShiftCache(tid);
+      // Union of old and new to clear/update all relevant employees
+      const allAffectedIds = new Set([...oldEmpIds, ...newEmpIds]);
+      for (const eid of allAffectedIds) {
+        await updateEmployeeShiftCache(eid);
       }
     }
 
+    // Emit socket event for real-time update
+    emitDataChange("employee_shifts", "update", { id });
+
     res.json({
-      message: "Employee shift(s) updated successfully",
-      ids: createdIds,
+      message: "Employee shift updated successfully",
+      id,
     });
   } catch (error) {
     console.error("❌ Error in updateEmployeeShift:", error);
-    console.error("Error stack:", error.stack);
     res.status(500).json({ error: error.message });
   }
 };
@@ -362,10 +467,23 @@ export const deleteEmployeeShift = async (req, res) => {
       null,
     );
 
-    // Sync back to employee cache if target was user
+    // Sync back to employee cache
     if (oldValues.target_type === "user") {
-      await updateEmployeeShiftCache(oldValues.target_value);
+      await updateEmployeeShiftCache(
+        oldValues.employee_id || oldValues.target_value,
+      );
+    } else {
+      const affectedIds = await resolveEmployeeIds(
+        oldValues.target_type,
+        oldValues.target_value,
+      );
+      for (const eid of affectedIds) {
+        await updateEmployeeShiftCache(eid);
+      }
     }
+
+    // Emit socket event for real-time update
+    emitDataChange("employee_shifts", "delete", { id });
 
     res.json({ message: "Employee shift deleted successfully" });
   } catch (error) {
@@ -407,6 +525,12 @@ export const createAttendanceSetting = async (req, res) => {
       req.body,
     );
 
+    // Emit socket event for real-time update
+    emitDataChange("attendance_settings", "create", {
+      id: result.insertId,
+      ...req.body,
+    });
+
     res.status(201).json({ id: result.insertId, ...req.body });
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -440,6 +564,9 @@ export const updateAttendanceSetting = async (req, res) => {
       req.body,
     );
 
+    // Emit socket event for real-time update
+    emitDataChange("attendance_settings", "update", { id });
+
     res.json({ message: "Attendance setting updated successfully" });
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -471,6 +598,9 @@ export const deleteAttendanceSetting = async (req, res) => {
       oldValues,
       null,
     );
+
+    // Emit socket event for real-time update
+    emitDataChange("attendance_settings", "delete", { id });
 
     res.json({ message: "Attendance setting deleted successfully" });
   } catch (error) {
@@ -530,6 +660,12 @@ export const createShift = async (req, res) => {
       req.body,
     );
 
+    // Emit socket event for real-time update
+    emitDataChange("attendance_shifts", "create", {
+      shift_id: result.insertId,
+      ...req.body,
+    });
+
     res.status(201).json({ shift_id: result.insertId, ...req.body });
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -582,6 +718,9 @@ export const updateShift = async (req, res) => {
       req.body,
     );
 
+    // Emit socket event for real-time update
+    emitDataChange("attendance_shifts", "update", { id });
+
     res.json({ message: "Shift updated successfully" });
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -613,6 +752,9 @@ export const deleteShift = async (req, res) => {
       oldValues,
       null,
     );
+
+    // Emit socket event for real-time update
+    emitDataChange("attendance_shifts", "delete", { id });
 
     res.json({ message: "Shift deleted successfully" });
   } catch (error) {
@@ -671,6 +813,12 @@ export const createShiftRule = async (req, res) => {
       req.body,
     );
 
+    // Emit socket event for real-time update
+    emitDataChange("attendance_shift_rules", "create", {
+      rule_id: result.insertId,
+      ...req.body,
+    });
+
     res.status(201).json({ rule_id: result.insertId, ...req.body });
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -719,6 +867,9 @@ export const updateShiftRule = async (req, res) => {
       req.body,
     );
 
+    // Emit socket event for real-time update
+    emitDataChange("attendance_shift_rules", "update", { id });
+
     res.json({ message: "Shift rule updated successfully" });
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -750,6 +901,9 @@ export const deleteShiftRule = async (req, res) => {
       oldValues,
       null,
     );
+
+    // Emit socket event for real-time update
+    emitDataChange("attendance_shift_rules", "delete", { id });
 
     res.json({ message: "Shift rule deleted successfully" });
   } catch (error) {
@@ -962,25 +1116,166 @@ export const deleteAttendanceLog = async (req, res) => {
 /**
  * 🔄 Helper to update employees.employee_shift_id cache
  */
+// =======================================================
+// 8. HELPERS
+// =======================================================
+
+// =======================================================
+// AFFECTED EMPLOYEES COUNT (FOR DELETION)
+// =======================================================
+export const getEmployeeShiftAffectedCount = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const pool = getPool();
+
+    const [rows] = await pool.query(
+      "SELECT target_type, target_value FROM attendance_employee_shift WHERE id = ?",
+      [id],
+    );
+
+    if (rows.length === 0) {
+      return res.status(404).json({ error: "Assignment not found" });
+    }
+
+    const { target_type, target_value } = rows[0];
+    const affectedIds = await resolveEmployeeIds(target_type, target_value);
+
+    res.json({ count: affectedIds.length });
+  } catch (error) {
+    console.error("❌ Error in getEmployeeShiftAffectedCount:", error);
+    res.status(500).json({ error: error.message });
+  }
+};
+
+async function resolveEmployeeIds(targetType, targetValue) {
+  const pool = getPool();
+  try {
+    if (!targetType || targetType === "all") {
+      const [rows] = await pool.query(
+        "SELECT id FROM employees WHERE deleted_at IS NULL",
+      );
+      return rows.map((r) => r.id);
+    }
+    if (!targetValue) return [];
+
+    const rawIds = String(targetValue)
+      .split(",")
+      .map((v) => v.trim())
+      .filter((v) => v);
+    if (rawIds.length === 0) return [];
+
+    let ids = [];
+    if (targetType === "user") {
+      const [rows] = await pool.query(
+        `SELECT id FROM employees WHERE (id IN (${rawIds.map(() => "?").join(",")}) OR nik IN (${rawIds.map(() => "?").join(",")})) AND deleted_at IS NULL`,
+        [...rawIds, ...rawIds],
+      );
+      ids = rows.map((r) => r.id);
+    } else if (targetType === "department") {
+      const [rows] = await pool.query(
+        `SELECT id FROM employees WHERE department_id IN (${rawIds.map(() => "?").join(",")}) AND deleted_at IS NULL`,
+        rawIds,
+      );
+      ids = rows.map((r) => r.id);
+    } else if (targetType === "branch") {
+      const [rows] = await pool.query(
+        `SELECT id FROM employees WHERE branch_id IN (${rawIds.map(() => "?").join(",")}) AND deleted_at IS NULL`,
+        rawIds,
+      );
+      ids = rows.map((r) => r.id);
+    } else if (targetType === "location") {
+      const [rows] = await pool.query(
+        `SELECT id FROM employees WHERE location_id IN (${rawIds.map(() => "?").join(",")}) AND deleted_at IS NULL`,
+        rawIds,
+      );
+      ids = rows.map((r) => r.id);
+    } else if (targetType === "position") {
+      const [rows] = await pool.query(
+        `SELECT id FROM employees WHERE position_id IN (${rawIds.map(() => "?").join(",")}) AND deleted_at IS NULL`,
+        rawIds,
+      );
+      ids = rows.map((r) => r.id);
+    } else if (targetType === "role") {
+      const [rows] = await pool.query(
+        `SELECT e.id FROM employees e JOIN users u ON e.user_id = u.id WHERE u.role_id IN (${rawIds.map(() => "?").join(",")}) AND e.deleted_at IS NULL`,
+        rawIds,
+      );
+      ids = rows.map((r) => r.id);
+    }
+    return ids;
+  } catch (error) {
+    console.error("❌ resolveEmployeeIds error:", error);
+    return [];
+  }
+}
+
 async function updateEmployeeShiftCache(employeeId) {
   try {
     const pool = getPool();
-    const [rows] = await pool.query(
-      "SELECT shift_id FROM attendance_employee_shift WHERE target_type = 'user' AND target_value = ? AND (is_deleted IS NULL OR is_deleted = 0)",
+
+    // 1. Fetch employee organizational info to check group-based assignments
+    const [empRows] = await pool.query(
+      `SELECT e.id, e.nik, e.department_id, e.branch_id, e.location_id, e.position_id, u.role_id 
+       FROM employees e 
+       LEFT JOIN users u ON e.user_id = u.id 
+       WHERE e.id = ?`,
       [employeeId],
     );
 
-    const shiftIds = rows
-      .map((r) => r.shift_id)
-      .filter((id) => id)
-      .join(",");
+    if (empRows.length === 0) return;
+    const emp = empRows[0];
+
+    // 2. Fetch all active assignments for this employee (direct or group)
+    const [rows] = await pool.query(
+      `SELECT rule_type, shift_id FROM attendance_employee_shift 
+       WHERE (is_deleted IS NULL OR is_deleted = 0)
+       AND (
+         target_type = 'all'
+         OR (target_type = 'user' AND (employee_id = ? OR nik = ? OR FIND_IN_SET(?, target_value) OR FIND_IN_SET(?, target_value)))
+         OR (target_type = 'department' AND FIND_IN_SET(?, target_value))
+         OR (target_type = 'branch' AND FIND_IN_SET(?, target_value))
+         OR (target_type = 'location' AND FIND_IN_SET(?, target_value))
+         OR (target_type = 'position' AND FIND_IN_SET(?, target_value))
+         OR (target_type = 'role' AND FIND_IN_SET(?, target_value))
+       )`,
+      [
+        emp.id,
+        emp.nik,
+        emp.id,
+        emp.nik,
+        emp.department_id,
+        emp.branch_id,
+        emp.location_id,
+        emp.position_id,
+        emp.role_id,
+      ],
+    );
+
+    // Collect all shift IDs, handling comma-separated values in each row
+    const allShiftIds = new Set();
+    rows.forEach((r) => {
+      if (r.rule_type === "setting") {
+        allShiftIds.add("setting");
+      }
+      if (r.shift_id && typeof r.shift_id === "string") {
+        r.shift_id
+          .split(",")
+          .map((id) => id.trim())
+          .filter((id) => id)
+          .forEach((id) => allShiftIds.add(id));
+      } else if (r.shift_id) {
+        allShiftIds.add(String(r.shift_id));
+      }
+    });
+
+    const shiftIdsString = Array.from(allShiftIds).join(",");
 
     await pool.query(
       "UPDATE employees SET employee_shift_id = ? WHERE id = ?",
-      [shiftIds || null, employeeId],
+      [shiftIdsString || null, employeeId],
     );
     console.log(
-      `✅ Synced employee_shift_id cache for employee ${employeeId}: ${shiftIds}`,
+      `✅ Synced employee_shift_id cache for employee ${employeeId}: ${shiftIdsString}`,
     );
   } catch (err) {
     console.error(
