@@ -11,7 +11,8 @@ export const getApiBaseUrl = () => {
     host.includes("ciptamuffler.com") ||
     host.includes("theciptagroup.co.id")
   ) {
-    return "https://api.theciptagroup.co.id";
+    // return "https://api.theciptagroup.co.id";
+    return "http://10.4.1.3:4500";
   }
 
   return `http://${host}:${port}`;
