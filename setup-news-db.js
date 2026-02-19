@@ -19,9 +19,9 @@ const setupNewsTables = async () => {
     // 1. Table News
     await conn.execute(`
       CREATE TABLE IF NOT EXISTS news (
-        id INT AUTO_INCREMENT PRIMARY KEY,
+        id CHAR(36) PRIMARY KEY,
         title VARCHAR(255) NOT NULL,
-        content TEXT NOT NULL,
+        content LONGTEXT NOT NULL,
         category VARCHAR(100) NOT NULL,
         status ENUM('draft', 'published', 'archived') DEFAULT 'draft',
         publish_at DATETIME NULL,
@@ -31,6 +31,7 @@ const setupNewsTables = async () => {
         pin_top BOOLEAN DEFAULT FALSE,
         priority ENUM('normal', 'high', 'urgent') DEFAULT 'normal',
         view_count INT DEFAULT 0,
+        cover_image TEXT NULL,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
         deleted_at TIMESTAMP NULL,
@@ -43,9 +44,9 @@ const setupNewsTables = async () => {
     await conn.execute(`
       CREATE TABLE IF NOT EXISTS news_targets (
         id INT AUTO_INCREMENT PRIMARY KEY,
-        news_id INT NOT NULL,
+        news_id CHAR(36) NOT NULL,
         target_type ENUM('all', 'user', 'department', 'role', 'branch', 'position') NOT NULL,
-        target_value VARCHAR(255) NULL, 
+        target_value TEXT NULL, 
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY (news_id) REFERENCES news(id) ON DELETE CASCADE
       )
@@ -61,7 +62,7 @@ const setupNewsTables = async () => {
     await conn.execute(`
       CREATE TABLE IF NOT EXISTS news_files (
         id INT AUTO_INCREMENT PRIMARY KEY,
-        news_id INT NOT NULL,
+        news_id CHAR(36) NOT NULL,
         file_path TEXT NOT NULL,
         file_name VARCHAR(255) NOT NULL,
         file_type ENUM('image', 'attachment') NOT NULL,
@@ -75,7 +76,7 @@ const setupNewsTables = async () => {
     await conn.execute(`
       CREATE TABLE IF NOT EXISTS news_read (
         id INT AUTO_INCREMENT PRIMARY KEY,
-        news_id INT NOT NULL,
+        news_id CHAR(36) NOT NULL,
         user_id INT NOT NULL,
         read_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY (news_id) REFERENCES news(id) ON DELETE CASCADE,

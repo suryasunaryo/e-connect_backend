@@ -35,13 +35,16 @@ const storage = multer.diskStorage({
 
 const upload = multer({
   storage: storage,
-  limits: { fileSize: 10 * 1024 * 1024 }, // 10MB limit
+  limits: {
+    fileSize: 50 * 1024 * 1024, // 50MB limit per file
+    fieldSize: 50 * 1024 * 1024, // 50MB limit for text fields
+  },
 });
 
 // Routes
 const cpUpload = upload.fields([
   { name: "cover_image", maxCount: 1 },
-  { name: "files", maxCount: 5 },
+  { name: "files", maxCount: 20 },
 ]);
 
 router.post("/", authenticateToken, cpUpload, createNews);

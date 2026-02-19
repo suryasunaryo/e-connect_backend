@@ -105,6 +105,33 @@ app.use("/api/*", (req, res) => {
   res.status(404).json({ error: "Endpoint not found" });
 });
 
+// GLOBAL ERROR HANDLER
+app.use((err, req, res, next) => {
+  console.error("❌ GLOBAL ERROR:", err);
+
+  // Handle Multer errors specifically
+  if (err.code === "LIMIT_FILE_SIZE") {
+    return res.status(400).json({ error: "File too large (max 50MB)" });
+  }
+  if (err.code === "LIMIT_FIELD_VALUE_TOO_LARGE") {
+    return res.status(400).json({ error: "Text content too large" });
+  }
+  if (err.code === "LIMIT_FILE_COUNT") {
+    return res.status(400).json({ error: "Too many files uploaded (max 20)" });
+  }
+  if (err.code === "LIMIT_UNEXPECTED_FILE") {
+    return res.status(400).json({
+      error: `Unexpected field: ${err.field}. Please ensure you only upload cover_image and news files.`,
+    });
+  }
+
+  res.status(err.status || 500).json({
+    error: err.message || "Internal Server Error",
+    details: err.details || null,
+    stack: process.env.NODE_ENV === "development" ? err.stack : undefined,
+  });
+});
+
 // NETWORK INFO helper
 const getLocalIp = () => {
   const interfaces = os.networkInterfaces();

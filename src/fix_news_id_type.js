@@ -12,7 +12,30 @@ const fix = async () => {
     // Try modifying. If it fails due to auto_increment, we might need to handle that.
     // Usually MODIFY removes auto_increment if not specified.
     await dbHelpers.execute(
-      "ALTER TABLE news MODIFY COLUMN id CHAR(36) NOT NULL"
+      "ALTER TABLE news MODIFY COLUMN id CHAR(36) NOT NULL",
+    );
+
+    console.log("🛠 ALTER news_targets.target_value to TEXT");
+    await dbHelpers.execute(
+      "ALTER TABLE news_targets MODIFY COLUMN target_value TEXT",
+    );
+
+    console.log("🛠 ALTER news.content to LONGTEXT");
+    await dbHelpers.execute("ALTER TABLE news MODIFY COLUMN content LONGTEXT");
+
+    console.log("🛠 ALTER news_targets.news_id to CHAR(36)");
+    await dbHelpers.execute(
+      "ALTER TABLE news_targets MODIFY COLUMN news_id CHAR(36) NOT NULL",
+    );
+
+    console.log("🛠 ALTER news_files.news_id to CHAR(36)");
+    await dbHelpers.execute(
+      "ALTER TABLE news_files MODIFY COLUMN news_id CHAR(36) NOT NULL",
+    );
+
+    console.log("🛠 ALTER news_read.news_id to CHAR(36)");
+    await dbHelpers.execute(
+      "ALTER TABLE news_read MODIFY COLUMN news_id CHAR(36) NOT NULL",
     );
 
     console.log("✅ ALTER Success");

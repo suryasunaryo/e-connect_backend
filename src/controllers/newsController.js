@@ -151,25 +151,31 @@ export const createNews = async (req, res) => {
     }
 
     // Insert News
-    await dbHelpers.execute(
-      `INSERT INTO news 
-      (id, title, content, category, created_by, publish_at, close_date, allow_comments, pin_top, priority, status, cover_image)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [
-        newsId,
-        title,
-        content,
-        category,
-        userId,
-        publish_at || null,
-        close_date || null,
-        allow_comments === "true" || allow_comments === true,
-        pin_top === "true" || pin_top === true,
-        priority || "normal",
-        status || "draft",
-        coverImagePath,
-      ],
-    );
+    console.log("📝 Inserting news into database...", { newsId, userId });
+    try {
+      await dbHelpers.execute(
+        `INSERT INTO news 
+        (id, title, content, category, created_by, publish_at, close_date, allow_comments, pin_top, priority, status, cover_image)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          newsId,
+          title,
+          content,
+          category,
+          userId,
+          publish_at || null,
+          close_date || null,
+          allow_comments === "true" || allow_comments === true,
+          pin_top === "true" || pin_top === true,
+          priority || "normal",
+          status || "draft",
+          coverImagePath,
+        ],
+      );
+    } catch (dbErr) {
+      console.error("❌ SQL Error inserting news:", dbErr);
+      throw dbErr; // Let the outer catch handle it
+    }
 
     // 2. Handle Targets
     if (targets) {
@@ -221,7 +227,11 @@ export const createNews = async (req, res) => {
     res.json({ success: true, data: { id: newsId } });
   } catch (error) {
     console.error("❌ Create news error:", error);
-    res.status(500).json({ error: "Failed to create news" });
+    res.status(500).json({
+      error: "Failed to create news",
+      details: error.message,
+      sqlMessage: error.sqlMessage,
+    });
   }
 };
 
@@ -514,7 +524,11 @@ export const updateNews = async (req, res) => {
     res.json({ success: true, message: "News updated successfully" });
   } catch (error) {
     console.error("❌ Update news error:", error);
-    res.status(500).json({ error: "Failed to update news" });
+    res.status(500).json({
+      error: "Failed to update news",
+      details: error.message,
+      sqlMessage: error.sqlMessage,
+    });
   }
 };
 
