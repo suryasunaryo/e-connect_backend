@@ -147,7 +147,7 @@ export const getAllPortalSettings = async (req, res) => {
       const user = await dbHelpers.queryOne(
         `SELECT u.id, u.role, ur.role_name, e.department_id as dept_id, e.branch_id, e.position_id 
          FROM users u 
-         LEFT JOIN employees e ON u.id = e.user_id 
+         LEFT JOIN employees e ON (e.user_id = u.id OR e.nik = u.username) AND e.deleted_at IS NULL 
          LEFT JOIN users_role ur ON u.role = ur.role_id
          WHERE u.id = ?`,
         [userId],

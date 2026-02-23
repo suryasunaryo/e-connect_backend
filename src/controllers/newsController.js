@@ -7,9 +7,10 @@ import { v4 as uuidv4 } from "uuid";
 // Helper to get employee data for targeting
 const getUserEmployeeData = async (userId) => {
   const employee = await dbHelpers.queryOne(
-    `SELECT id, department_id, branch_id, position_id 
-     FROM employees 
-     WHERE user_id = ? AND deleted_at IS NULL`,
+    `SELECT e.id, e.department_id, e.branch_id, e.position_id 
+     FROM employees e
+     JOIN users u ON (e.user_id = u.id OR e.nik = u.username)
+     WHERE u.id = ? AND e.deleted_at IS NULL`,
     [userId],
   );
   return employee || {};
@@ -51,13 +52,19 @@ const createNewsNotifications = async (newsId, title, targets) => {
           ids = rawIds.map(Number);
         } else if (tType === "department") {
           const rows = await dbHelpers.query(
-            `SELECT user_id FROM employees WHERE department_id IN (${rawIds.map(() => "?").join(",")}) AND user_id IS NOT NULL`,
+            `SELECT u.id as user_id 
+             FROM employees e
+             JOIN users u ON (e.user_id = u.id OR e.nik = u.username)
+             WHERE e.department_id IN (${rawIds.map(() => "?").join(",")}) AND e.deleted_at IS NULL`,
             rawIds,
           );
           ids = rows.map((r) => r.user_id);
         } else if (tType === "branch") {
           const rows = await dbHelpers.query(
-            `SELECT user_id FROM employees WHERE branch_id IN (${rawIds.map(() => "?").join(",")}) AND user_id IS NOT NULL`,
+            `SELECT u.id as user_id 
+             FROM employees e
+             JOIN users u ON (e.user_id = u.id OR e.nik = u.username)
+             WHERE e.branch_id IN (${rawIds.map(() => "?").join(",")}) AND e.deleted_at IS NULL`,
             rawIds,
           );
           ids = rows.map((r) => r.user_id);
@@ -69,7 +76,10 @@ const createNewsNotifications = async (newsId, title, targets) => {
           ids = rows.map((r) => r.id);
         } else if (tType === "position") {
           const rows = await dbHelpers.query(
-            `SELECT user_id FROM employees WHERE position_id IN (${rawIds.map(() => "?").join(",")}) AND user_id IS NOT NULL`,
+            `SELECT u.id as user_id 
+             FROM employees e
+             JOIN users u ON (e.user_id = u.id OR e.nik = u.username)
+             WHERE e.position_id IN (${rawIds.map(() => "?").join(",")}) AND e.deleted_at IS NULL`,
             rawIds,
           );
           ids = rows.map((r) => r.user_id);

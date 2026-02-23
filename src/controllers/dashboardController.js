@@ -334,7 +334,7 @@ export const getWhosOnline = async (req, res) => {
         p.position_name,
         d.dept_name as department_name
       FROM users u
-      LEFT JOIN employees e ON u.id = e.user_id
+      LEFT JOIN employees e ON (e.user_id = u.id OR e.nik = u.username) AND e.deleted_at IS NULL
       LEFT JOIN positions p ON e.position_id = p.id
       LEFT JOIN departments d ON e.department_id = d.id
       WHERE u.last_activity >= DATE_SUB(NOW(), INTERVAL 15 MINUTE)

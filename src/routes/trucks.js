@@ -119,15 +119,11 @@ const createStorage = () => {
       const timestamp = DateTime.now()
         .setZone("Asia/Jakarta")
         .toFormat("yyyyMMdd'T'HHmmss");
-      const seq = "01"; // Simplify sequence since we don't track it per-request easily in multer without overhead
-
-      // We append unique suffix to ensure non-collision if multiple files uploaded same second
-      // Or trust timestamp? User specified exactly: {truck_id}...{timestamp}.{ext}
-      // Let's stick closely to user request but add safe random if needed (user didn't ask for random)
-      // "TRUCK-000123_CI_truck_01_20260125T171722.jpg"
+      const seq = "01"; // Simplify sequence
 
       const safeId = String(ctx.truckId).replace(/[^a-zA-Z0-9-_]/g, "_");
-      const finalName = `${safeId}_${ctx.stage}_${type}_${seq}_${timestamp}${ext}`;
+      // Add uniqueSuffix to prevent multiple files in exact same second from overwriting each other
+      const finalName = `${safeId}_${ctx.stage}_${type}_${seq}_${timestamp}_${Math.round(Math.random() * 1e6)}${ext}`;
 
       cb(null, finalName);
     },
@@ -298,9 +294,8 @@ router.post(
     { name: "sim", maxCount: 1 },
   ]),
   activityLogger.logTruckActivity("CREATE", (req, data) => {
-    return `Membuat truck baru: ${req.body.license_plate || "Unknown"} - ${
-      req.body.driver_name || "Unknown Driver"
-    }`;
+    return `Membuat truck baru: ${req.body.license_plate || "Unknown"} - ${req.body.driver_name || "Unknown Driver"
+      }`;
   }), // ✅ TAMBAHKAN MIDDLEWARE
   async (req, res) => {
     let connection = null;
@@ -376,7 +371,7 @@ router.post(
           const rel = `/uploads/trucks/${path
             .relative(
               process.env.UPLOAD_PATH ||
-                path.join(__dirname, "../../uploads/trucks"),
+              path.join(__dirname, "../../uploads/trucks"),
               file.path,
             )
             .replace(/\\/g, "/")}`;
@@ -466,9 +461,8 @@ router.put(
     { name: "sim", maxCount: 1 },
   ]),
   activityLogger.logTruckActivity("UPDATE", (req, data) => {
-    return `Memperbarui truck #${req.params.id}: ${
-      req.body.license_plate || "Unknown"
-    }`;
+    return `Memperbarui truck #${req.params.id}: ${req.body.license_plate || "Unknown"
+      }`;
   }), // ✅ TAMBAHKAN MIDDLEWARE
   async (req, res) => {
     let connection = null;
@@ -501,20 +495,22 @@ router.put(
       }
 
       const newPhotoJson = { ...currentPhotoJson };
+      const newFilesMap = {};
+
       Object.keys(req.files || {}).forEach((field) => {
-        const arr = (newPhotoJson[field] || []).concat(
-          req.files[field].map((file) => {
-            const rel = `/uploads/trucks/${path
-              .relative(
-                process.env.UPLOAD_PATH ||
-                  path.join(__dirname, "../../uploads/trucks"),
-                file.path,
-              )
-              .replace(/\\/g, "/")}`;
-            return rel;
-          }),
-        );
-        newPhotoJson[field] = arr;
+        const arr = req.files[field].map((file) => {
+          const rel = `/uploads/trucks/${path
+            .relative(
+              process.env.UPLOAD_PATH ||
+              path.join(__dirname, "../../uploads/trucks"),
+              file.path,
+            )
+            .replace(/\\/g, "/")}`;
+          return rel;
+        });
+        newFilesMap[field] = arr;
+        // APPEND new photos instead of overwriting existing ones
+        newPhotoJson[field] = (newPhotoJson[field] || []).concat(arr);
       });
 
       // Also merge individual photo columns if exist
@@ -528,15 +524,12 @@ router.put(
             baseArr = [];
           }
         }
-        if (newPhotoJson[colName]) {
-          baseArr = baseArr.concat(newPhotoJson[colName]);
-        } else if (
-          newPhotoJson[colName.replace("_photos", "document_photos")] &&
-          colName === "document_photos"
-        ) {
-          // nothing
+
+        if (newFilesMap[colName] && newFilesMap[colName].length > 0) {
+          baseArr = baseArr.concat(newFilesMap[colName]);
         }
-        return baseArr.length ? JSON.stringify(baseArr) : null;
+
+        return baseArr.length > 0 ? JSON.stringify(baseArr) : null;
       };
 
       // form fields - fallback to existing values if not provided
@@ -600,12 +593,9 @@ router.put(
       // updated_by if available
       const updated_by = req.user && req.user.id ? req.user.id : null;
 
-      const truckPhotosText =
-        newPhotoJson.truck_photos || existing.truck_photos || null;
-      const documentPhotosText =
-        newPhotoJson.document_photos || existing.document_photos || null;
-      const otherPhotosText =
-        newPhotoJson.other_photos || existing.other_photos || null;
+      const truckPhotosText = makeMergedCol("truck_photos");
+      const documentPhotosText = makeMergedCol("document_photos");
+      const otherPhotosText = makeMergedCol("other_photos");
 
       // If those are arrays, stringify them
       const stringifyIfArr = (val) =>
@@ -676,9 +666,8 @@ router.post(
   "/calendar",
   authenticateToken,
   activityLogger.logTruckActivity("CREATE", (req, data) => {
-    return `Membuat jadwal calendar: ${req.body.truck_asal || "Unknown"} -> ${
-      req.body.destination || "Unknown"
-    }`;
+    return `Membuat jadwal calendar: ${req.body.truck_asal || "Unknown"} -> ${req.body.destination || "Unknown"
+      }`;
   }), // ✅ TAMBAHKAN MIDDLEWARE
 
   async (req, res) => {
@@ -767,7 +756,7 @@ router.post(
           const rel = `/uploads/trucks/${path
             .relative(
               process.env.UPLOAD_PATH ||
-                path.join(__dirname, "../../uploads/trucks"),
+              path.join(__dirname, "../../uploads/trucks"),
               file.path,
             )
             .replace(/\\/g, "/")}`;
@@ -986,9 +975,8 @@ router.post(
   "/:id/cancel",
   authenticateToken,
   activityLogger.logTruckActivity("CANCEL", (req, data) => {
-    return `Membatalkan truck #${req.params.id}: ${
-      req.body.cancellation_reason || "Tanpa alasan"
-    }`;
+    return `Membatalkan truck #${req.params.id}: ${req.body.cancellation_reason || "Tanpa alasan"
+      }`;
   }),
   async (req, res) => {
     try {

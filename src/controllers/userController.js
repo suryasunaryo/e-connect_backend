@@ -316,8 +316,8 @@ export const deleteUser = async (req, res) => {
 
       // Clear user_id from employees table first
       await connection.query(
-        "UPDATE employees SET user_id = NULL WHERE user_id = ?",
-        [id],
+        "UPDATE employees SET user_id = NULL WHERE user_id = ? OR nik = (SELECT username FROM users WHERE id = ?)",
+        [id, id],
       );
 
       // Delete user
