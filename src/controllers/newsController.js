@@ -274,7 +274,7 @@ export const getAllNews = async (req, res) => {
       condition += ` AND (
         (n.close_date IS NULL OR n.close_date > CURRENT_TIMESTAMP)
         AND 
-        (n.publish_at IS NULL OR n.publish_at <= CURRENT_TIMESTAMP)
+        (n.publish_at IS NULL OR n.publish_at <= DATE_ADD(CURRENT_TIMESTAMP, INTERVAL 5 SECOND))
       )`;
     }
 

@@ -11,14 +11,14 @@ export const getPublicNews = async (req, res) => {
       WHERE n.deleted_at IS NULL 
       AND n.status = 'published'
       AND (n.close_date IS NULL OR n.close_date > CURRENT_TIMESTAMP)
-      AND (n.publish_at IS NULL OR n.publish_at <= CURRENT_TIMESTAMP)
+      AND (n.publish_at IS NULL OR n.publish_at <= DATE_ADD(CURRENT_TIMESTAMP, INTERVAL 5 SECOND))
       AND EXISTS (
         SELECT 1 FROM news_targets nt 
         WHERE nt.news_id = n.id 
         AND nt.target_type = 'all'
       )
       ORDER BY n.pin_top DESC, n.priority DESC, n.created_at DESC
-      LIMIT 10
+      LIMIT 50
     `;
 
     const news = await dbHelpers.query(sql);

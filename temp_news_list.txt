@@ -1,0 +1,7 @@
+ID | Title | Status | Targets | Publish At | Created At
+---------------------------------------------------------
+28ff244c-5d5a-403b-9f9e-f1dfcff7f97a | INFORMASI BUKTI POTONG PPh 21 | published | all | Mon Feb 23 2026 10:11:00 GMT+0700 (Indochina Time) | Mon Feb 23 2026 03:08:17 GMT+0700 (Indochina Time)
+01d7b90d-bab1-4db1-b773-48e074e4d6c4 | JADWAL PETUGAS PIKET TUTUP KANTOR BULAN MARET 2026 | published | all | Sun Mar 01 2026 06:02:00 GMT+0700 (Indochina Time) | Mon Feb 23 2026 02:59:41 GMT+0700 (Indochina Time)
+e3b893be-c8f3-4f69-add3-bc882c3be9db | JADWAL PETUGAS PIKET TUTUP KANTOR BULAN FEBRUARI 2026 | published | all | Thu Feb 19 2026 09:34:00 GMT+0700 (Indochina Time) | Wed Feb 18 2026 19:34:28 GMT+0700 (Indochina Time)
+40a5046d-c9c4-4c64-ad24-416fd3ff8a20 | TUTORIAL PEMBUATAN AKUN, PASSPHRASE & SPT DI CORETAX | published | all | Thu Feb 19 2026 09:18:00 GMT+0700 (Indochina Time) | Wed Feb 18 2026 19:28:37 GMT+0700 (Indochina Time)
+d88b6dcf-3c38-4404-b260-1fd8acd0ef62 | Internal Memo - Pengaturan Jam Kerja Selama Bulan Puasa Tahun 2026 | published | all | Thu Feb 19 2026 09:01:00 GMT+0700 (Indochina Time) | Wed Feb 18 2026 19:07:58 GMT+0700 (Indochina Time)
