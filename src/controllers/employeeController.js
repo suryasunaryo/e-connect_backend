@@ -705,7 +705,7 @@ export const createUserFromEmployee = async (req, res) => {
           menu_groups,
           menu_access,
           employee.full_name || "",
-          employee.office_email || employee.personal_email || "",
+          employee.office_email || employee.personal_email || null,
           employee.phone || "",
           true,
         ],
@@ -838,7 +838,7 @@ export const autoCreateUsers = async (req, res) => {
                 : roleData.menu_permissions
               : null,
             emp.full_name || "",
-            emp.office_email || emp.personal_email || "",
+            emp.office_email || emp.personal_email || null,
             emp.phone || "",
             true,
           ],
