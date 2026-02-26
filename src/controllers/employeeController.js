@@ -675,6 +675,21 @@ export const createUserFromEmployee = async (req, res) => {
       });
     }
 
+    // Check if email already exists in users table (if employee has email)
+    const empEmail = employee.office_email || employee.personal_email || null;
+    if (empEmail) {
+      const existingEmail = await dbHelpers.queryOne(
+        "SELECT id FROM users WHERE email = ?",
+        [empEmail],
+      );
+
+      if (existingEmail) {
+        return res.status(400).json({
+          error: `Email ${empEmail} is already used by another account`,
+        });
+      }
+    }
+
     // Start transaction
     const pool = await dbHelpers.getPool();
     const connection = await pool.getConnection();
@@ -815,11 +830,27 @@ export const autoCreateUsers = async (req, res) => {
 
         if (existingUser.length > 0) {
           skippedCount++;
-          // Optional: Link existing user? For now just skip to avoid overwriting/guessing
           errors.push(
             `Employee ${emp.full_name} skipped: Username ${emp.nik} already exists`,
           );
           continue;
+        }
+
+        // Check if email already exists in users table (if employee has email)
+        const empEmail = emp.office_email || emp.personal_email || null;
+        if (empEmail) {
+          const [existingEmail] = await connection.query(
+            "SELECT id FROM users WHERE email = ?",
+            [empEmail],
+          );
+
+          if (existingEmail.length > 0) {
+            skippedCount++;
+            errors.push(
+              `Employee ${emp.full_name} skipped: Email ${empEmail} is already used by another account`,
+            );
+            continue;
+          }
         }
 
         // Create user

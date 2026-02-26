@@ -66,6 +66,16 @@ export const createUser = async (req, res) => {
     if (existing)
       return res.status(400).json({ error: "Username sudah digunakan" });
 
+    if (email) {
+      const existingEmail = await dbHelpers.queryOne(
+        "SELECT id FROM users WHERE email = ?",
+        [email],
+      );
+      if (existingEmail) {
+        return res.status(400).json({ error: "Email sudah digunakan" });
+      }
+    }
+
     // Determine permissions: use request body if provided, otherwise fetch from role
     let menu_groups = req.body.menu_groups;
     let menu_access = req.body.menu_access;

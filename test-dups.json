@@ -1,0 +1,19 @@
+{
+  "emps": [
+    {
+      "id": 231,
+      "nik": "0000003",
+      "full_name": "Peggy Kosasih",
+      "office_email": "peggy@ciptanissin.co.id",
+      "personal_email": null,
+      "user_id": null
+    }
+  ],
+  "users": [
+    {
+      "id": 238,
+      "username": "3",
+      "email": "peggy@ciptanissin.co.id"
+    }
+  ]
+}

@@ -1,0 +1,6 @@
+{
+  "type": "error",
+  "message": "Duplicate entry 'peggy@ciptanissin.co.id' for key 'users.email'",
+  "sqlMessage": "Duplicate entry 'peggy@ciptanissin.co.id' for key 'users.email'"
+}
+{"type":"res.json","data":{"error":"Failed to auto create users"}}
