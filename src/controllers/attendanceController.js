@@ -1,6 +1,13 @@
 import { getPool } from "../config/database.js";
 import { activityLogService } from "../services/activityLogService.js";
 import { emitDataChange } from "../utils/socketHelpers.js";
+import { compareFaces } from "../services/faceRecognitionService.js";
+import path from "path";
+import fs from "fs";
+import { fileURLToPath } from "url";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 // Helper to log activity
 const logActivity = async (
@@ -979,15 +986,56 @@ export const uploadAttendanceCapture = async (req, res) => {
     );
 
     let logId;
+    let finalMatchStatus = is_matched || null;
+
+    // --- Backend Face Matching ---
+    // If frontend didn't send a match status (because we moved it to backend), calculate it here
+    if (!is_matched || is_matched === "checking") {
+      try {
+        const [empRows] = await pool.query(
+          "SELECT picture FROM employees WHERE nik = ?",
+          [nik],
+        );
+        if (empRows.length > 0 && empRows[0].picture) {
+          const profilePath = path.resolve(
+            __dirname,
+            "../../",
+            empRows[0].picture.startsWith("/")
+              ? empRows[0].picture.substring(1)
+              : empRows[0].picture,
+          );
+          console.log(`🤖 [FaceMatch] Profile Path: ${profilePath}`);
+          console.log(`🤖 [FaceMatch] Capture Path: ${req.file.path}`);
+
+          if (fs.existsSync(profilePath)) {
+            console.log(
+              `🤖 [FaceMatch] Starting comparison for NIK: ${nik}...`,
+            );
+            finalMatchStatus = await compareFaces(profilePath, req.file.path);
+          } else {
+            console.warn(
+              `⚠️ [FaceMatch] Profile picture NOT FOUND at: ${profilePath}`,
+            );
+            finalMatchStatus = "no-face-profile";
+          }
+        } else {
+          finalMatchStatus = "no-face-profile";
+        }
+      } catch (faceErr) {
+        console.error("❌ Backend face matching error:", faceErr);
+        finalMatchStatus = "error";
+      }
+    }
+
     if (existingLogs.length > 0) {
       // Update existing log with photo and match status
       logId = existingLogs[0].id;
       await pool.query(
         "UPDATE attendance_log SET picture = ?, is_matched = ? WHERE id = ?",
-        [filePath, matchedValue, logId],
+        [filePath, finalMatchStatus, logId],
       );
       console.log(
-        `📸 Updated existing log ${logId} with photo and match=${matchedValue} for NIK: ${nik}`,
+        `📸 Updated existing log ${logId} with photo and match=${finalMatchStatus} for NIK: ${nik}`,
       );
     } else {
       // Fallback: create new log if not found (backward compatibility)
@@ -1004,14 +1052,14 @@ export const uploadAttendanceCapture = async (req, res) => {
           emp.full_name || "Unknown",
           emp.rfid_number || "Unknown",
           filePath,
-          matchedValue,
+          finalMatchStatus,
           dateStr,
           timeStr,
         ],
       );
       logId = result.insertId;
       console.log(
-        `📸 Created new log ${logId} with photo and match=${matchedValue} for NIK: ${nik} (fallback)`,
+        `📸 Created new log ${logId} with photo and match=${finalMatchStatus} for NIK: ${nik} (fallback)`,
       );
     }
 
@@ -1019,7 +1067,7 @@ export const uploadAttendanceCapture = async (req, res) => {
     emitDataChange("attendance_logs", "update", {
       id: logId,
       picture: filePath,
-      is_matched: matchedValue,
+      is_matched: finalMatchStatus,
     });
 
     console.log(`📸 Attendance capture received and logged for NIK: ${nik}`);
@@ -1029,7 +1077,7 @@ export const uploadAttendanceCapture = async (req, res) => {
       message: "Attendance photo uploaded successfully",
       file_path: filePath,
       log_id: logId,
-      is_matched: matchedValue,
+      is_matched: finalMatchStatus,
     });
   } catch (error) {
     console.error("Error uploading attendance capture:", error);
@@ -1050,33 +1098,41 @@ export const getAttendanceLogs = async (req, res) => {
     const offset = (page - 1) * limit;
     const pool = getPool();
 
-    let query = "SELECT * FROM attendance_log";
-    let countQuery = "SELECT COUNT(*) as total FROM attendance_log";
+    let query = `
+      SELECT al.*, e.picture as profile_picture 
+      FROM attendance_log al
+      LEFT JOIN employees e ON al.nik = e.nik
+    `;
+    let countQuery = `
+      SELECT COUNT(*) as total 
+      FROM attendance_log al
+      LEFT JOIN employees e ON al.nik = e.nik
+    `;
     let whereClauses = [];
     let params = [];
 
     if (startDate && endDate) {
-      whereClauses.push("attendance_date BETWEEN ? AND ?");
+      whereClauses.push("al.attendance_date BETWEEN ? AND ?");
       params.push(startDate, endDate);
     }
 
     if (search) {
       whereClauses.push(
-        "(full_name LIKE ? OR nik LIKE ? OR rfid_number LIKE ?)",
+        "(al.full_name LIKE ? OR al.nik LIKE ? OR al.rfid_number LIKE ?)",
       );
       const searchVal = `%${search}%`;
       params.push(searchVal, searchVal, searchVal);
     }
 
     if (match_status && match_status !== "all") {
-      whereClauses.push("is_matched = ?");
+      whereClauses.push("al.is_matched = ?");
       params.push(match_status);
     }
 
     const whereClause =
       whereClauses.length > 0 ? ` WHERE ${whereClauses.join(" AND ")}` : "";
 
-    query += whereClause + " ORDER BY created_at DESC LIMIT ? OFFSET ?";
+    query += whereClause + " ORDER BY al.created_at DESC LIMIT ? OFFSET ?";
     countQuery += whereClause;
 
     const [rows] = await pool.query(query, [

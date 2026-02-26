@@ -485,3 +485,74 @@ export const getCalendarEvents = async (req, res) => {
     res.status(500).json({ error: "Gagal mengambil calendar events" });
   }
 };
+/**
+ * 📊 Get Personal Attendance Stats for Dashboard Widget
+ */
+export const getPersonalStats = async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const username = req.user.username;
+    const { month, year } = req.query;
+
+    const targetMonth = month ? parseInt(month) : new Date().getMonth() + 1;
+    const targetYear = year ? parseInt(year) : new Date().getFullYear();
+
+    // 1. Get Employee NIK for the logged-in user (try user_id first, then username)
+    let employee = await dbHelpers.queryOne(
+      "SELECT nik FROM employees WHERE user_id = ? AND deleted_at IS NULL",
+      [userId],
+    );
+
+    if (!employee && username) {
+      employee = await dbHelpers.queryOne(
+        "SELECT nik FROM employees WHERE nik = ? AND deleted_at IS NULL",
+        [username],
+      );
+    }
+
+    // 2. Get Global Total Employees
+    const totalEmp = await dbHelpers.queryOne(
+      "SELECT COUNT(*) as total FROM employees WHERE deleted_at IS NULL",
+    );
+
+    if (!employee) {
+      return res.json({
+        success: true,
+        data: {
+          totalEmployees: parseInt(totalEmp?.total || 0),
+          presentDays: 0,
+          lateArrivals: 0,
+          earlyCheckOuts: 0,
+        },
+      });
+    }
+
+    const nik = employee.nik;
+
+    // 3. Get Personal Stats from attendance_summary
+    const stats = await dbHelpers.queryOne(
+      `SELECT 
+        COUNT(*) as presentDays,
+        SUM(CASE WHEN LOWER(status) LIKE '%late%' THEN 1 ELSE 0 END) as lateArrivals,
+        SUM(CASE WHEN LOWER(status_off) LIKE '%early check out%' THEN 1 ELSE 0 END) as earlyCheckOuts
+      FROM attendance_summary
+      WHERE nik = ? 
+        AND MONTH(attendance_date) = ? 
+        AND YEAR(attendance_date) = ?`,
+      [nik, targetMonth, targetYear],
+    );
+
+    res.json({
+      success: true,
+      data: {
+        totalEmployees: parseInt(totalEmp?.total || 0),
+        presentDays: parseInt(stats?.presentDays || 0),
+        lateArrivals: parseInt(stats?.lateArrivals || 0),
+        earlyCheckOuts: parseInt(stats?.earlyCheckOuts || 0),
+      },
+    });
+  } catch (error) {
+    console.error("❌ Get personal stats error:", error);
+    res.status(500).json({ error: "Gagal mengambil statistik personal" });
+  }
+};

@@ -1,5 +1,12 @@
 import { dbHelpers } from "../config/database.js";
 import { emitDataChange } from "../utils/socketHelpers.js";
+import { compareFaces } from "../services/faceRecognitionService.js";
+import path from "path";
+import fs from "fs";
+import { fileURLToPath } from "url";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 export const getPublicNews = async (req, res) => {
   try {
@@ -213,39 +220,80 @@ export const uploadPublicAttendanceCapture = async (req, res) => {
     );
 
     let logId;
+    let finalMatchStatus = is_matched || null;
+
+    // --- Backend Face Matching ---
+    if (!is_matched || is_matched === "checking") {
+      try {
+        const emp = await dbHelpers.queryOne(
+          "SELECT picture FROM employees WHERE nik = ?",
+          [nik],
+        );
+        if (emp && emp.picture) {
+          const profilePath = path.resolve(
+            __dirname,
+            "../../",
+            emp.picture.startsWith("/")
+              ? emp.picture.substring(1)
+              : emp.picture,
+          );
+          console.log(`🤖 [PublicFaceMatch] Profile Path: ${profilePath}`);
+          console.log(`🤖 [PublicFaceMatch] Capture Path: ${req.file.path}`);
+
+          if (fs.existsSync(profilePath)) {
+            console.log(
+              `🤖 [PublicFaceMatch] Starting comparison for NIK: ${nik}...`,
+            );
+            finalMatchStatus = await compareFaces(profilePath, req.file.path);
+          } else {
+            console.warn(
+              `⚠️ [PublicFaceMatch] Profile picture NOT FOUND at: ${profilePath}`,
+            );
+            finalMatchStatus = "no-face-profile";
+          }
+        } else {
+          finalMatchStatus = "no-face-profile";
+        }
+      } catch (faceErr) {
+        console.error("❌ Backend (Public) face matching error:", faceErr);
+        finalMatchStatus = "error";
+      }
+    }
+
     if (existingLogs.length > 0) {
       // Update existing log with photo and match status
       logId = existingLogs[0].id;
       await dbHelpers.execute(
         "UPDATE attendance_log SET picture = ?, is_matched = ? WHERE id = ?",
-        [filePath, matchedValue, logId],
+        [filePath, finalMatchStatus, logId],
       );
       console.log(
-        `📸 Updated existing log ${logId} with photo and match=${matchedValue} for NIK: ${nik}`,
+        `📸 Updated existing log ${logId} with photo and match=${finalMatchStatus} for NIK: ${nik}`,
       );
     } else {
       // Fallback: create new log if not found (backward compatibility)
-      const [empRows] = await dbHelpers.query(
+      const emp = await dbHelpers.queryOne(
         "SELECT full_name, rfid_number FROM employees WHERE nik = ?",
         [nik],
       );
-      const emp = empRows[0] || {};
+      const full_name = emp?.full_name || "Unknown";
+      const rfid_number = emp?.rfid_number || "Unknown";
 
       const result = await dbHelpers.execute(
         "INSERT INTO attendance_log (nik, full_name, rfid_number, picture, is_matched, attendance_date, attendance_time) VALUES (?, ?, ?, ?, ?, ?, ?)",
         [
           nik,
-          emp.full_name || "Unknown",
-          emp.rfid_number || "Unknown",
+          full_name,
+          rfid_number,
           filePath,
-          matchedValue,
+          finalMatchStatus,
           dateStr,
           timeStr,
         ],
       );
       logId = result.insertId;
       console.log(
-        `📸 Created new log ${logId} with photo and match=${matchedValue} for NIK: ${nik} (fallback)`,
+        `📸 Created new log ${logId} with photo and match=${finalMatchStatus} for NIK: ${nik} (fallback)`,
       );
     }
 
@@ -253,7 +301,7 @@ export const uploadPublicAttendanceCapture = async (req, res) => {
     emitDataChange("attendance_logs", "update", {
       id: logId,
       picture: filePath,
-      is_matched: matchedValue,
+      is_matched: finalMatchStatus,
     });
 
     res.json({
@@ -261,7 +309,7 @@ export const uploadPublicAttendanceCapture = async (req, res) => {
       message: "Attendance photo uploaded successfully",
       file_path: filePath,
       log_id: logId,
-      is_matched: matchedValue,
+      is_matched: finalMatchStatus,
     });
   } catch (error) {
     console.error("❌ Error uploading attendance capture (public):", error);

@@ -1,0 +1,40 @@
+2026-02-26T09:58:08.985Z - [StatsRow] Fetching stats for UserID: 19, Month: 2, Year: 2026, Username: 2019149
+2026-02-26T09:58:09.059Z - [StatsRow] NIK not found by user_id, trying username: 2019149
+2026-02-26T09:58:09.172Z - [StatsRow] Found NIK: 2019149 for user 19
+2026-02-26T09:58:09.262Z - [StatsRow] Query result for 2019149: {"presentDays":3,"lateArrivals":"3","earlyCheckOuts":"3"}
+2026-02-26T09:58:09.312Z - [StatsRow] Fetching stats for UserID: 19, Month: 2, Year: 2026, Username: 2019149
+2026-02-26T09:58:09.357Z - [StatsRow] NIK not found by user_id, trying username: 2019149
+2026-02-26T09:58:09.439Z - [StatsRow] Found NIK: 2019149 for user 19
+2026-02-26T09:58:09.451Z - [StatsRow] Query result for 2019149: {"presentDays":3,"lateArrivals":"3","earlyCheckOuts":"3"}
+2026-02-26T09:59:24.573Z - [StatsRow] Fetching stats for UserID: 19, Month: 2, Year: 2026, Username: 2019149
+2026-02-26T09:59:24.612Z - [StatsRow] NIK not found by user_id, trying username: 2019149
+2026-02-26T09:59:24.647Z - [StatsRow] Found NIK: 2019149 for user 19
+2026-02-26T09:59:24.679Z - [StatsRow] Query result for 2019149: {"presentDays":3,"lateArrivals":"3","earlyCheckOuts":"2"}
+2026-02-26T09:59:24.772Z - [StatsRow] Fetching stats for UserID: 19, Month: 2, Year: 2026, Username: 2019149
+2026-02-26T09:59:24.803Z - [StatsRow] NIK not found by user_id, trying username: 2019149
+2026-02-26T09:59:24.871Z - [StatsRow] Found NIK: 2019149 for user 19
+2026-02-26T09:59:24.957Z - [StatsRow] Query result for 2019149: {"presentDays":3,"lateArrivals":"3","earlyCheckOuts":"2"}
+2026-02-26T09:59:52.283Z - [StatsRow] Fetching stats for UserID: 19, Month: 1, Year: 2026, Username: 2019149
+2026-02-26T09:59:52.301Z - [StatsRow] NIK not found by user_id, trying username: 2019149
+2026-02-26T09:59:52.311Z - [StatsRow] Found NIK: 2019149 for user 19
+2026-02-26T09:59:52.315Z - [StatsRow] Query result for 2019149: {"presentDays":0,"lateArrivals":null,"earlyCheckOuts":null}
+2026-02-26T09:59:53.011Z - [StatsRow] Fetching stats for UserID: 19, Month: 2, Year: 2026, Username: 2019149
+2026-02-26T09:59:53.019Z - [StatsRow] NIK not found by user_id, trying username: 2019149
+2026-02-26T09:59:53.026Z - [StatsRow] Found NIK: 2019149 for user 19
+2026-02-26T09:59:53.031Z - [StatsRow] Query result for 2019149: {"presentDays":3,"lateArrivals":"3","earlyCheckOuts":"2"}
+2026-02-26T10:00:37.497Z - [StatsRow] Fetching stats for UserID: 19, Month: 2, Year: 2026, Username: 2019149
+2026-02-26T10:00:37.576Z - [StatsRow] NIK not found by user_id, trying username: 2019149
+2026-02-26T10:00:37.745Z - [StatsRow] Found NIK: 2019149 for user 19
+2026-02-26T10:00:37.829Z - [StatsRow] Query result for 2019149: {"presentDays":3,"lateArrivals":"3","earlyCheckOuts":"2"}
+2026-02-26T10:00:37.918Z - [StatsRow] Fetching stats for UserID: 19, Month: 2, Year: 2026, Username: 2019149
+2026-02-26T10:00:38.000Z - [StatsRow] NIK not found by user_id, trying username: 2019149
+2026-02-26T10:00:38.115Z - [StatsRow] Found NIK: 2019149 for user 19
+2026-02-26T10:00:38.187Z - [StatsRow] Query result for 2019149: {"presentDays":3,"lateArrivals":"3","earlyCheckOuts":"2"}
+2026-02-26T10:01:03.003Z - [StatsRow] Fetching stats for UserID: 19, Month: 2, Year: 2026, Username: 2019149
+2026-02-26T10:01:03.034Z - [StatsRow] NIK not found by user_id, trying username: 2019149
+2026-02-26T10:01:03.127Z - [StatsRow] Found NIK: 2019149 for user 19
+2026-02-26T10:01:03.217Z - [StatsRow] Query result for 2019149: {"presentDays":3,"lateArrivals":"3","earlyCheckOuts":"2"}
+2026-02-26T10:01:03.416Z - [StatsRow] Fetching stats for UserID: 19, Month: 2, Year: 2026, Username: 2019149
+2026-02-26T10:01:03.473Z - [StatsRow] NIK not found by user_id, trying username: 2019149
+2026-02-26T10:01:03.685Z - [StatsRow] Found NIK: 2019149 for user 19
+2026-02-26T10:01:03.816Z - [StatsRow] Query result for 2019149: {"presentDays":3,"lateArrivals":"3","earlyCheckOuts":"2"}

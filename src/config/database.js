@@ -1691,6 +1691,111 @@ const createTablesIfNeeded = async (pool) => {
         [defaultPortals],
       );
     }
+
+    // ---------------------------------------------------------
+    // MIGRATION: attendance_summary table
+    // ---------------------------------------------------------
+    const [attendanceSummaryTable] = await connection.execute(
+      "SELECT COUNT(*) as count FROM information_schema.tables WHERE table_schema = ? AND table_name = 'attendance_summary'",
+      [dbConfig.database],
+    );
+
+    if (attendanceSummaryTable[0].count === 0) {
+      console.log("📋 Creating attendance_summary table...");
+      await connection.execute(`
+        CREATE TABLE attendance_summary (
+          id INT AUTO_INCREMENT PRIMARY KEY,
+          nik VARCHAR(50) NOT NULL,
+          attendance_date DATE NOT NULL,
+          clock_in TIME,
+          clock_out TIME,
+          status VARCHAR(100),
+          face_log_count INT DEFAULT 0,
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+          updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+          UNIQUE KEY unique_nik_date (nik, attendance_date),
+          INDEX idx_nik (nik),
+          INDEX idx_date (attendance_date)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+      `);
+      console.log("✅ attendance_summary table created successfully");
+    } else {
+      // MIGRATION: Ensure shift_name column exists
+      try {
+        const [shiftColCheck] = await connection.execute(
+          "SELECT COUNT(*) as count FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = ? AND TABLE_NAME = 'attendance_summary' AND COLUMN_NAME = 'shift_name'",
+          [dbConfig.database],
+        );
+        if (shiftColCheck[0].count === 0) {
+          console.log(
+            "migrating: Adding shift_name column to attendance_summary table...",
+          );
+          await connection.execute(
+            "ALTER TABLE attendance_summary ADD COLUMN shift_name VARCHAR(100) NULL AFTER nik",
+          );
+          console.log("✅ shift_name column added to attendance_summary.");
+        }
+
+        const [codeColCheck] = await connection.execute(
+          "SELECT COUNT(*) as count FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = ? AND TABLE_NAME = 'attendance_summary' AND COLUMN_NAME = 'shift_code'",
+          [dbConfig.database],
+        );
+        if (codeColCheck[0].count === 0) {
+          console.log(
+            "migrating: Adding shift_code column to attendance_summary table...",
+          );
+          await connection.execute(
+            "ALTER TABLE attendance_summary ADD COLUMN shift_code VARCHAR(50) NULL AFTER nik",
+          );
+          console.log("✅ shift_code column added to attendance_summary.");
+        }
+
+        const [startColCheck] = await connection.execute(
+          "SELECT COUNT(*) as count FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = ? AND TABLE_NAME = 'attendance_summary' AND COLUMN_NAME = 'shift_start_time'",
+          [dbConfig.database],
+        );
+        if (startColCheck[0].count === 0) {
+          console.log(
+            "migrating: Adding shift_start_time to attendance_summary...",
+          );
+          await connection.execute(
+            "ALTER TABLE attendance_summary ADD COLUMN shift_start_time TIME NULL AFTER shift_name",
+          );
+        }
+
+        const [endColCheck] = await connection.execute(
+          "SELECT COUNT(*) as count FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = ? AND TABLE_NAME = 'attendance_summary' AND COLUMN_NAME = 'shift_end_time'",
+          [dbConfig.database],
+        );
+        if (endColCheck[0].count === 0) {
+          console.log(
+            "migrating: Adding shift_end_time to attendance_summary...",
+          );
+          await connection.execute(
+            "ALTER TABLE attendance_summary ADD COLUMN shift_end_time TIME NULL AFTER shift_start_time",
+          );
+        }
+      } catch (err) {
+        console.warn(
+          "Migration warning (attendance_summary columns):",
+          err.message,
+        );
+      }
+
+      // MIGRATION: Ensure correct collation for existing table
+      // This fixes the "Illegal mix of collations" error
+      try {
+        await connection.execute(`
+          ALTER TABLE attendance_summary 
+          CONVERT TO CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+        `);
+      } catch (err) {
+        console.warn(
+          "⚠️ Migration warning (attendance_summary collation):",
+          err.message,
+        );
+      }
+    }
   } catch (error) {
     console.error("❌ Error creating tables:", error);
     // Don't throw error to allow server to start even if table creation fails

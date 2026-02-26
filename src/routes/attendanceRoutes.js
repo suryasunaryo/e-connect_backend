@@ -27,6 +27,12 @@ import {
   getAttendanceLogs,
   deleteAttendanceLog,
 } from "../controllers/attendanceController.js";
+import {
+  getDailyReport,
+  syncAttendanceSummary,
+  getFaceLogDetails,
+  getDashboardStats,
+} from "../controllers/attendanceReportController.js";
 
 import multer from "multer";
 import path from "path";
@@ -132,5 +138,11 @@ router.get("/shift-rules", getShiftRules);
 router.post("/shift-rules", createShiftRule);
 router.put("/shift-rules/:id", updateShiftRule);
 router.delete("/shift-rules/:id", deleteShiftRule);
+
+// RFID Reports
+router.get("/report/daily", getDailyReport);
+router.post("/report/sync", syncAttendanceSummary);
+router.get("/report/face-log", getFaceLogDetails);
+router.get("/report/dashboard-stats", getDashboardStats);
 
 export default router;

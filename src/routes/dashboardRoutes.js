@@ -9,6 +9,7 @@ import {
   getWhosOnline,
   getCalendarEvents,
   updateGlobalCardDefaults,
+  getPersonalStats,
 } from "../controllers/dashboardController.js";
 import { requireAdmin } from "../middleware/auth.js";
 
@@ -42,5 +43,8 @@ router.get("/whos-online", authenticateToken, getWhosOnline);
 
 // GET - Get calendar events for widget
 router.get("/calendar-events", authenticateToken, getCalendarEvents);
+
+// GET - Get personal stats for quick stats widget
+router.get("/person-stats", authenticateToken, getPersonalStats);
 
 export default router;
