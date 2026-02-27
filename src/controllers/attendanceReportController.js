@@ -356,6 +356,21 @@ export const getDashboardStats = async (req, res) => {
     const { startDate, endDate } = req.query;
     const pool = getPool();
 
+    // Calculate previous period
+    const start = new Date(startDate);
+    const end = new Date(endDate);
+    const diffTime = Math.abs(end.getTime() - start.getTime());
+    const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24)) + 1; // inclusive days
+
+    const prevEnd = new Date(start);
+    prevEnd.setDate(prevEnd.getDate() - 1);
+
+    const prevStart = new Date(prevEnd);
+    prevStart.setDate(prevStart.getDate() - (diffDays - 1));
+
+    const prevStartDate = prevStart.toISOString().split("T")[0];
+    const prevEndDate = prevEnd.toISOString().split("T")[0];
+
     // 1. Get total active employees
     const [empRows] = await pool.query(
       "SELECT COUNT(*) as total FROM employees WHERE deleted_at IS NULL",
@@ -370,7 +385,15 @@ export const getDashboardStats = async (req, res) => {
       [startDate, endDate],
     );
 
-    // 3. Process statistics
+    // 2.5 Get attendance summary data for PREVIOUS range
+    const [prevSummaryRows] = await pool.query(
+      `SELECT status, status_off 
+       FROM attendance_summary 
+       WHERE attendance_date BETWEEN ? AND ?`,
+      [prevStartDate, prevEndDate],
+    );
+
+    // 3. Process CURRENT statistics
     let totalTap = summaryRows.length;
     let lateCount = 0;
     let earlyOutCount = 0;
@@ -384,7 +407,6 @@ export const getDashboardStats = async (req, res) => {
     };
 
     summaryRows.forEach((row) => {
-      // Ensure date is string YYYY-MM-DD
       let dateStr = "";
       if (row.attendance_date instanceof Date) {
         dateStr = row.attendance_date.toISOString().split("T")[0];
@@ -398,7 +420,6 @@ export const getDashboardStats = async (req, res) => {
 
       trendMap[dateStr].total++;
 
-      // Check Late (Duty On)
       if (row.status?.includes("Late")) {
         lateCount++;
         trendMap[dateStr].late++;
@@ -412,11 +433,20 @@ export const getDashboardStats = async (req, res) => {
         statusDistribution["OTHER"]++;
       }
 
-      // Check Early Out (Duty Off)
       if (row.status_off?.includes("Early Check Out")) {
         earlyOutCount++;
         trendMap[dateStr].earlyOut++;
       }
+    });
+
+    // 4. Process PREVIOUS statistics
+    let prevTotalTap = prevSummaryRows.length;
+    let prevLateCount = 0;
+    let prevEarlyOutCount = 0;
+
+    prevSummaryRows.forEach((row) => {
+      if (row.status?.includes("Late")) prevLateCount++;
+      if (row.status_off?.includes("Early Check Out")) prevEarlyOutCount++;
     });
 
     // Convert trendMap to sorted array
@@ -436,6 +466,12 @@ export const getDashboardStats = async (req, res) => {
         totalTap,
         lateCount,
         earlyOutCount,
+      },
+      prevSummary: {
+        totalEmployees, // Usually relatively static or we can just pass the same
+        totalTap: prevTotalTap,
+        lateCount: prevLateCount,
+        earlyOutCount: prevEarlyOutCount,
       },
       trendData,
       distributionData,
