@@ -22,9 +22,14 @@ export const getDailyReport = async (req, res) => {
         s.shift_name as shift,
         s.shift_code,
         s.shift_start_time as schedule_on_time,
-        s.shift_end_time as schedule_off_time
+        s.shift_end_time as schedule_off_time,
+        b.branch_name,
+        (SELECT GROUP_CONCAT(dept_name SEPARATOR ', ') FROM departments WHERE FIND_IN_SET(id, e.department_id)) as department_name,
+        l.office_name as location_name
       FROM attendance_summary s
       JOIN employees e ON s.nik = e.nik
+      LEFT JOIN branches b ON e.branch_id = b.id
+      LEFT JOIN location l ON e.location_id = l.id
       WHERE 1=1
     `;
     const params = [];

@@ -5,7 +5,7 @@ import { emitDataChange } from "../utils/socketHelpers.js";
 export const getAllBranches = async (req, res) => {
   try {
     const rows = await dbHelpers.query(`
-      SELECT id, branch_name, branch_desc
+      SELECT id, branch_name, branch_desc, branch_logo
       FROM branches
       WHERE deleted_at IS NULL
       ORDER BY id ASC
@@ -24,7 +24,7 @@ export const getBranchById = async (req, res) => {
     const { id } = req.params;
 
     const rows = await dbHelpers.query(
-      `SELECT id, branch_name, branch_desc 
+      `SELECT id, branch_name, branch_desc, branch_logo 
        FROM branches 
        WHERE id = ? AND deleted_at IS NULL`,
       [id],
@@ -45,11 +45,17 @@ export const getBranchById = async (req, res) => {
 export const createBranch = async (req, res) => {
   try {
     const { branch_name, branch_desc } = req.body;
+    let { branch_logo } = req.body;
+
+    // Handle file upload from Multer
+    if (req.file) {
+      branch_logo = `/uploads/branches/${req.file.filename}`;
+    }
 
     await dbHelpers.execute(
-      `INSERT INTO branches (branch_name, branch_desc)
-       VALUES (?, ?)`,
-      [branch_name, branch_desc],
+      `INSERT INTO branches (branch_name, branch_desc, branch_logo)
+       VALUES (?, ?, ?)`,
+      [branch_name, branch_desc, branch_logo],
     );
 
     emitDataChange("branches", "create", { branch_name, branch_desc });
@@ -66,12 +72,18 @@ export const updateBranch = async (req, res) => {
   try {
     const { id } = req.params;
     const { branch_name, branch_desc } = req.body;
+    let { branch_logo } = req.body;
+
+    // Handle file upload from Multer
+    if (req.file) {
+      branch_logo = `/uploads/branches/${req.file.filename}`;
+    }
 
     await dbHelpers.execute(
       `UPDATE branches
-       SET branch_name=?, branch_desc=?, updated_at=NOW()
+       SET branch_name=?, branch_desc=?, branch_logo=?, updated_at=NOW()
        WHERE id=?`,
-      [branch_name, branch_desc, id],
+      [branch_name, branch_desc, branch_logo, id],
     );
 
     emitDataChange("branches", "update", { id, branch_name, branch_desc });

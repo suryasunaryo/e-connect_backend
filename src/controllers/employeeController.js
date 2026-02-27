@@ -158,6 +158,7 @@ export const createEmployee = async (req, res) => {
       bpjs_health,
       ktp_number,
       rfid_number,
+      location_id,
     } = req.body;
 
     // Handle file upload
@@ -215,8 +216,8 @@ export const createEmployee = async (req, res) => {
         user_id, full_name, picture, nik, barcode, branch_id, department_id, position_id, title_id,
         employee_status, contract_count, join_date, effective_date, end_effective_date, resign_date_rehire,
         religion, gender, marital_status, place_of_birth, date_of_birth, address, phone, office_email,
-        personal_email, npwp, bpjs_tk, bpjs_health, ktp_number, rfid_number, employee_shift_id
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        personal_email, npwp, bpjs_tk, bpjs_health, ktp_number, rfid_number, employee_shift_id, location_id
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         user_id || null,
         full_name,
@@ -248,6 +249,7 @@ export const createEmployee = async (req, res) => {
         ktp_number || null,
         rfid_number || null,
         req.body.employee_shift_id || null,
+        location_id || null,
       ],
     );
 
@@ -319,6 +321,7 @@ export const updateEmployee = async (req, res) => {
       bpjs_health,
       ktp_number,
       rfid_number,
+      location_id,
     } = req.body;
 
     // Check if employee exists
@@ -390,7 +393,7 @@ export const updateEmployee = async (req, res) => {
              religion = ?, gender = ?, marital_status = ?, place_of_birth = ?, date_of_birth = ?,
              address = ?, phone = ?, office_email = ?, personal_email = ?, npwp = ?,
              bpjs_tk = ?, bpjs_health = ?, ktp_number = ?, rfid_number = ?, 
-             employee_shift_id = ?, updated_at = CURRENT_TIMESTAMP 
+             employee_shift_id = ?, location_id = ?, updated_at = CURRENT_TIMESTAMP 
            WHERE id = ?`,
           [
             user_id !== undefined ? user_id : existing.user_id,
@@ -443,6 +446,7 @@ export const updateEmployee = async (req, res) => {
             req.body.employee_shift_id !== undefined
               ? req.body.employee_shift_id
               : existing.employee_shift_id,
+            location_id !== undefined ? location_id : existing.location_id,
             id,
           ],
         );
@@ -480,7 +484,7 @@ export const updateEmployee = async (req, res) => {
            religion = ?, gender = ?, marital_status = ?, place_of_birth = ?, date_of_birth = ?,
            address = ?, phone = ?, office_email = ?, personal_email = ?, npwp = ?,
            bpjs_tk = ?, bpjs_health = ?, ktp_number = ?, rfid_number = ?,
-           employee_shift_id = ?, updated_at = CURRENT_TIMESTAMP 
+           employee_shift_id = ?, location_id = ?, updated_at = CURRENT_TIMESTAMP 
          WHERE id = ?`,
         [
           user_id !== undefined ? user_id : existing.user_id,
@@ -529,6 +533,7 @@ export const updateEmployee = async (req, res) => {
           req.body.employee_shift_id !== undefined
             ? req.body.employee_shift_id
             : existing.employee_shift_id,
+          location_id !== undefined ? location_id : existing.location_id,
           id,
         ],
       );

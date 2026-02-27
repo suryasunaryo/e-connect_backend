@@ -262,12 +262,35 @@ const createTablesIfNeeded = async (pool) => {
           id INT AUTO_INCREMENT PRIMARY KEY,
           branch_name VARCHAR(255) NOT NULL,
           branch_desc TEXT,
+          branch_logo VARCHAR(255) NULL,
           is_active TINYINT(1) DEFAULT 1,
           created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
           updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
           deleted_at TIMESTAMP NULL
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
       `);
+    } else {
+      // Migration: Add branch_logo if it doesn't exist
+      try {
+        const [branchColCheck] = await connection.execute(
+          "SELECT COUNT(*) as count FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = ? AND TABLE_NAME = 'branches' AND COLUMN_NAME = 'branch_logo'",
+          [dbConfig.database],
+        );
+        if (branchColCheck[0].count === 0) {
+          console.log(
+            "migrating: Adding branch_logo column to branches table...",
+          );
+          await connection.execute(
+            "ALTER TABLE branches ADD COLUMN branch_logo VARCHAR(255) NULL AFTER branch_desc",
+          );
+          console.log("✅ branch_logo column added to branches.");
+        }
+      } catch (migErr) {
+        console.error(
+          "Migration warning (branches.branch_logo):",
+          migErr.message,
+        );
+      }
     }
 
     const [departmentsTable] = await connection.execute(
