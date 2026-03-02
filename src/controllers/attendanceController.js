@@ -499,6 +499,304 @@ export const deleteEmployeeShift = async (req, res) => {
 };
 
 // =======================================================
+// 2b. ATTENDANCE EMPLOYEE NEW SHIFT
+// =======================================================
+export const getEmployeeNewShifts = async (req, res) => {
+  try {
+    const pool = getPool();
+    const [rows] = await pool.query(`
+      SELECT aens.*, e.full_name, e.nik as employee_nik
+      FROM attendance_employee_newshift aens
+      LEFT JOIN employees e ON aens.employee_id = e.id OR (aens.target_type = 'user' AND (aens.target_value = e.id OR aens.target_value = e.nik))
+      WHERE (aens.is_deleted IS NULL OR aens.is_deleted = 0) AND aens.is_active = 1
+    `);
+
+    // Fetch all shifts to map names efficiently
+    const [shifts] = await pool.query(
+      "SELECT shift_id, shift_name, shift_code FROM attendance_shifts",
+    );
+    const shiftMap = shifts.reduce((acc, s) => {
+      acc[s.shift_id] = s;
+      return acc;
+    }, {});
+
+    // Map shift names for comma-separated IDs
+    const enrichedRows = rows.map((row) => {
+      if (
+        row.shift_id &&
+        typeof row.shift_id === "string" &&
+        row.shift_id.includes(",")
+      ) {
+        const ids = row.shift_id.split(",").map((id) => id.trim());
+        const names = ids
+          .map((id) => shiftMap[id]?.shift_name || id)
+          .join(", ");
+        const codes = ids
+          .map((id) => shiftMap[id]?.shift_code || "")
+          .filter((c) => c)
+          .join(", ");
+        return { ...row, shift_name: names, shift_code: codes };
+      } else if (row.shift_id) {
+        const s = shiftMap[row.shift_id];
+        return {
+          ...row,
+          shift_name: s?.shift_name || row.shift_id,
+          shift_code: s?.shift_code || "",
+        };
+      }
+      return { ...row, shift_name: "", shift_code: "" };
+    });
+
+    res.json(enrichedRows);
+  } catch (error) {
+    console.error("❌ Error in getEmployeeNewShifts:", error);
+    res.status(500).json({ error: error.message });
+  }
+};
+
+export const createEmployeeNewShift = async (req, res) => {
+  try {
+    const {
+      target_type,
+      target_value,
+      rule_type,
+      shift_id,
+      start_date,
+      end_date,
+    } = req.body;
+
+    if (!target_type || !rule_type || !start_date) {
+      return res.status(400).json({
+        error: "Missing required fields: target_type, rule_type, start_date",
+      });
+    }
+
+    if (target_type !== "all" && !target_value) {
+      return res.status(400).json({
+        error: "target_value is required when target_type is not 'all'",
+      });
+    }
+
+    const pool = getPool();
+
+    const normalizedShiftId =
+      rule_type === "shift" && shift_id
+        ? Array.isArray(shift_id)
+          ? shift_id.join(",")
+          : String(shift_id)
+              .split(",")
+              .map((s) => s.trim())
+              .filter((s) => s)
+              .join(",")
+        : null;
+
+    const createdIds = [];
+
+    if (target_type === "user") {
+      const targetIds = String(target_value)
+        .split(",")
+        .map((v) => v.trim())
+        .filter((v) => v);
+
+      for (const tid of targetIds) {
+        const [empRows] = await pool.query(
+          "SELECT id, nik FROM employees WHERE id = ? OR nik = ? LIMIT 1",
+          [tid, tid],
+        );
+
+        const employee_id = empRows.length > 0 ? empRows[0].id : null;
+        const nik = empRows.length > 0 ? empRows[0].nik : null;
+
+        const [result] = await pool.query(
+          "INSERT INTO attendance_employee_newshift (employee_id, nik, target_type, target_value, rule_type, shift_id, start_date, end_date) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+          [
+            employee_id,
+            nik,
+            "user",
+            tid,
+            rule_type || "shift",
+            normalizedShiftId,
+            start_date,
+            end_date || null,
+          ],
+        );
+        createdIds.push(result.insertId);
+      }
+    } else {
+      const [result] = await pool.query(
+        "INSERT INTO attendance_employee_newshift (target_type, target_value, rule_type, shift_id, start_date, end_date) VALUES (?, ?, ?, ?, ?, ?)",
+        [
+          target_type,
+          target_type === "all" ? "all" : target_value,
+          rule_type || "shift",
+          normalizedShiftId,
+          start_date,
+          end_date || null,
+        ],
+      );
+      createdIds.push(result.insertId);
+    }
+
+    emitDataChange("employee_newshifts", "create", {
+      ids: createdIds,
+      target_type,
+      target_value,
+    });
+
+    await logActivity(
+      req,
+      "CREATE",
+      "attendance_employee_newshift",
+      createdIds[0],
+      `Assigned new shift ${shift_id || ""} to ${target_type}: ${target_value}`,
+      null,
+      req.body,
+    );
+
+    res.status(201).json({ ids: createdIds, ...req.body });
+  } catch (error) {
+    console.error("❌ Error in createEmployeeNewShift:", error);
+    res.status(500).json({ error: error.message });
+  }
+};
+
+export const updateEmployeeNewShift = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const {
+      target_type,
+      target_value,
+      rule_type,
+      shift_id,
+      start_date,
+      end_date,
+    } = req.body;
+    const pool = getPool();
+
+    const [oldRows] = await pool.query(
+      "SELECT * FROM attendance_employee_newshift WHERE id = ?",
+      [id],
+    );
+    const oldValues = oldRows[0];
+
+    const normalizedShiftId =
+      rule_type === "shift" && shift_id
+        ? Array.isArray(shift_id)
+          ? shift_id.join(",")
+          : String(shift_id)
+              .split(",")
+              .map((s) => s.trim())
+              .filter((s) => s)
+              .join(",")
+        : null;
+
+    let empId = oldValues?.employee_id || null;
+    let empNik = oldValues?.nik || null;
+
+    if (target_type === "user") {
+      const [empRows] = await pool.query(
+        "SELECT id, nik FROM employees WHERE id = ? OR nik = ? LIMIT 1",
+        [target_value, target_value],
+      );
+      if (empRows.length > 0) {
+        empId = empRows[0].id;
+        empNik = empRows[0].nik;
+      }
+    }
+
+    await pool.query(
+      "UPDATE attendance_employee_newshift SET employee_id = ?, nik = ?, target_type = ?, target_value = ?, rule_type = ?, shift_id = ?, start_date = ?, end_date = ? WHERE id = ?",
+      [
+        empId,
+        empNik,
+        target_type || "user",
+        target_type === "all" ? "all" : target_value,
+        rule_type || "shift",
+        normalizedShiftId,
+        start_date,
+        end_date || null,
+        id,
+      ],
+    );
+
+    await logActivity(
+      req,
+      "UPDATE",
+      "attendance_employee_newshift",
+      id,
+      `Updated new shift assignment. Shifts: ${shift_id || ""}`,
+      oldValues,
+      req.body,
+    );
+
+    emitDataChange("employee_newshifts", "update", { id });
+
+    res.json({ message: "Employee new shift updated successfully", id });
+  } catch (error) {
+    console.error("❌ Error in updateEmployeeNewShift:", error);
+    res.status(500).json({ error: error.message });
+  }
+};
+
+export const deleteEmployeeNewShift = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const pool = getPool();
+
+    const [oldRows] = await pool.query(
+      "SELECT * FROM attendance_employee_newshift WHERE id = ?",
+      [id],
+    );
+    const oldValues = oldRows[0];
+
+    await pool.query(
+      "UPDATE attendance_employee_newshift SET is_deleted = 1, deleted_at = NOW() WHERE id = ?",
+      [id],
+    );
+
+    await logActivity(
+      req,
+      "DELETE",
+      "attendance_employee_newshift",
+      id,
+      `Deleted employee new shift ID: ${id}`,
+      oldValues,
+      null,
+    );
+
+    emitDataChange("employee_newshifts", "delete", { id });
+
+    res.json({ message: "Employee new shift deleted successfully" });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+};
+
+export const getEmployeeNewShiftAffectedCount = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const pool = getPool();
+
+    const [rows] = await pool.query(
+      "SELECT target_type, target_value FROM attendance_employee_newshift WHERE id = ?",
+      [id],
+    );
+
+    if (rows.length === 0) {
+      return res.status(404).json({ error: "Assignment not found" });
+    }
+
+    const { target_type, target_value } = rows[0];
+    const affectedIds = await resolveEmployeeIds(target_type, target_value);
+
+    res.json({ count: affectedIds.length });
+  } catch (error) {
+    console.error("❌ Error in getEmployeeNewShiftAffectedCount:", error);
+    res.status(500).json({ error: error.message });
+  }
+};
+
+// =======================================================
 // 3. ATTENDANCE SETTINGS
 // =======================================================
 export const getAttendanceSettings = async (req, res) => {

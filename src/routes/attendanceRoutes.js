@@ -10,6 +10,11 @@ import {
   updateEmployeeShift,
   deleteEmployeeShift,
   getEmployeeShiftAffectedCount,
+  getEmployeeNewShifts,
+  createEmployeeNewShift,
+  updateEmployeeNewShift,
+  deleteEmployeeNewShift,
+  getEmployeeNewShiftAffectedCount,
   getAttendanceSettings,
   createAttendanceSetting,
   updateAttendanceSetting,
@@ -120,6 +125,16 @@ router.get(
 router.post("/employee-shifts", createEmployeeShift);
 router.put("/employee-shifts/:id", updateEmployeeShift);
 router.delete("/employee-shifts/:id", deleteEmployeeShift);
+
+// Employee New Shifts
+router.get("/employee-newshifts", getEmployeeNewShifts);
+router.get(
+  "/employee-newshifts/:id/affected-count",
+  getEmployeeNewShiftAffectedCount,
+);
+router.post("/employee-newshifts", createEmployeeNewShift);
+router.put("/employee-newshifts/:id", updateEmployeeNewShift);
+router.delete("/employee-newshifts/:id", deleteEmployeeNewShift);
 
 // Attendance Settings
 router.get("/settings", getAttendanceSettings);

@@ -998,6 +998,82 @@ const createTablesIfNeeded = async (pool) => {
       `);
     }
 
+    const [attendanceEmployeeNewShiftTable] = await connection.execute(
+      "SELECT COUNT(*) as count FROM information_schema.tables WHERE table_schema = ? AND table_name = 'attendance_employee_newshift'",
+      [dbConfig.database],
+    );
+
+    if (attendanceEmployeeNewShiftTable[0].count === 0) {
+      console.log("📋 Creating attendance_employee_newshift table...");
+      await connection.execute(`
+        CREATE TABLE attendance_employee_newshift (
+          id INT AUTO_INCREMENT PRIMARY KEY,
+          employee_id INT NULL,
+          nik VARCHAR(50) NULL,
+          target_type VARCHAR(50) DEFAULT 'user',
+          target_value TEXT NULL,
+          rule_type VARCHAR(20) DEFAULT 'shift',
+          shift_id VARCHAR(255) NULL,
+          start_date DATE,
+          end_date DATE,
+          is_active TINYINT(1) DEFAULT 1,
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+          updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+          is_deleted TINYINT(1) DEFAULT 0,
+          deleted_at TIMESTAMP NULL,
+          FOREIGN KEY (employee_id) REFERENCES employees(id) ON DELETE CASCADE
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+      `);
+      console.log("✅ attendance_employee_newshift table created successfully");
+    } else {
+      // Migration: Ensure correct collation for existing table
+      try {
+        await connection.execute(`
+          ALTER TABLE attendance_employee_newshift 
+          CONVERT TO CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci
+        `);
+
+        // Migration: Ensure is_active column exists
+        const [columns] = await connection.execute(
+          "SHOW COLUMNS FROM attendance_employee_newshift LIKE 'is_active'",
+        );
+        if (columns.length === 0) {
+          console.log(
+            "📋 Adding 'is_active' column to attendance_employee_newshift...",
+          );
+          await connection.execute(
+            "ALTER TABLE attendance_employee_newshift ADD COLUMN is_active TINYINT(1) DEFAULT 1 AFTER end_date",
+          );
+        }
+
+        // Migration: Ensure is_deleted column exists and has default 0
+        const [delColumns] = await connection.execute(
+          "SHOW COLUMNS FROM attendance_employee_newshift LIKE 'is_deleted'",
+        );
+        if (delColumns.length === 0) {
+          console.log(
+            "📋 Adding 'is_deleted' column to attendance_employee_newshift...",
+          );
+          await connection.execute(
+            "ALTER TABLE attendance_employee_newshift ADD COLUMN is_deleted TINYINT(1) DEFAULT 0 AFTER is_active",
+          );
+        } else if (delColumns[0].Default === null) {
+          console.log("📋 Updating 'is_deleted' default value...");
+          await connection.execute(
+            "ALTER TABLE attendance_employee_newshift MODIFY COLUMN is_deleted TINYINT(1) DEFAULT 0",
+          );
+          await connection.execute(
+            "UPDATE attendance_employee_newshift SET is_deleted = 0 WHERE is_deleted IS NULL",
+          );
+        }
+      } catch (migrationErr) {
+        console.warn(
+          "Migration warning (attendance_employee_newshift):",
+          migrationErr.message,
+        );
+      }
+    }
+
     const [attendanceCodeTable] = await connection.execute(
       "SELECT COUNT(*) as count FROM information_schema.tables WHERE table_schema = ? AND table_name = 'attendance_code'",
       [dbConfig.database],

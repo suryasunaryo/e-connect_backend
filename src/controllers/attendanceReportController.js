@@ -105,7 +105,7 @@ export const syncAttendanceSummary = async (req, res) => {
         [niks],
       );
 
-      // Fetch global settings once per date loop if needed
+      // 3. Fetch global settings once per date loop if needed
       const [settingsRows] = await pool.query(
         "SELECT setting_key, setting_value FROM attendance_settings WHERE is_deleted = 0 OR is_deleted IS NULL",
       );
@@ -114,11 +114,24 @@ export const syncAttendanceSummary = async (req, res) => {
         return acc;
       }, {});
 
+      // 4. Fetch new shifts for this date
+      const [newShiftsRows] = await pool.query(
+        `SELECT nik, rule_type, shift_id FROM attendance_employee_newshift 
+         WHERE is_active = 1 AND is_deleted = 0 
+         AND start_date <= ? AND (end_date >= ? OR end_date IS NULL)
+         AND nik IN (?)`,
+        [targetDate, targetDate, niks],
+      );
+      const newShiftsMap = newShiftsRows.reduce((acc, s) => {
+        acc[s.nik] = s;
+        return acc;
+      }, {});
+
       console.log(
         `👥 Syncing ${employees.length} employees for date ${targetDate}`,
       );
 
-      // 3. Process each employee
+      // 5. Process each employee
       for (const emp of employees) {
         const empLogs = logsByNik[emp.nik];
         if (!empLogs) continue;
@@ -140,6 +153,18 @@ export const syncAttendanceSummary = async (req, res) => {
         let usedShiftStart = null;
         let usedShiftEnd = null;
 
+        // Determine which shift to use: priority to attendance_employee_newshift
+        let shiftValue = emp.employee_shift_id
+          ? String(emp.employee_shift_id)
+          : null;
+        const newShiftMatch = newShiftsMap[emp.nik];
+        if (newShiftMatch) {
+          shiftValue =
+            newShiftMatch.rule_type === "setting"
+              ? "setting"
+              : String(newShiftMatch.shift_id);
+        }
+
         // Day of week from YYYY-MM-DD string consistently
         const d = new Date(targetDate);
         const dayNames = [
@@ -154,9 +179,7 @@ export const syncAttendanceSummary = async (req, res) => {
         const dayOfWeek = dayNames[d.getUTCDay()]; // "Monday", etc.
 
         // STATUS CALCULATION LOGIC
-        if (emp.employee_shift_id) {
-          const shiftValue = String(emp.employee_shift_id);
-
+        if (shiftValue) {
           if (shiftValue.includes("setting")) {
             // MODE 2: SETTING RULES
             usedShiftName = "GLOBAL SETTING";
