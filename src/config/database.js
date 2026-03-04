@@ -1912,8 +1912,8 @@ const createTablesIfNeeded = async (pool) => {
             host VARCHAR(255) NOT NULL,
             port INT NOT NULL,
             database_name VARCHAR(255) NOT NULL,
-            username VARCHAR(255) NOT NULL,
-            password TEXT NOT NULL,
+            username VARCHAR(255) NULL,
+            password TEXT NULL,
             ssl_enabled BOOLEAN DEFAULT FALSE,
             timeout INT DEFAULT 30,
             charset VARCHAR(50) DEFAULT 'utf8mb4',
@@ -1927,6 +1927,22 @@ const createTablesIfNeeded = async (pool) => {
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
       `);
       console.log("✅ database_connections table created successfully");
+    } else {
+      // Migration: Allow NULL for username and password in database_connections
+      try {
+        console.log(
+          "migrating: Making username and password nullable in database_connections...",
+        );
+        await connection.execute(
+          "ALTER TABLE database_connections MODIFY COLUMN username VARCHAR(255) NULL, MODIFY COLUMN password TEXT NULL",
+        );
+        console.log("✅ database_connections table migration completed.");
+      } catch (migErr) {
+        console.error(
+          "Migration warning (database_connections nullable):",
+          migErr.message,
+        );
+      }
     }
 
     // Check and create database_saved_queries table

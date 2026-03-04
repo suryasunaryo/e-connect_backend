@@ -75,12 +75,41 @@ export class MySQLAdapter extends BaseAdapter {
     await this.connect();
     const startTime = Date.now();
     try {
-      const [rows] = await this.pool.query(sql, params);
+      const [rows, fields] = await this.pool.query({
+        sql,
+        values: params,
+        rowsAsArray: true,
+      });
+
       const executionTime = Date.now() - startTime;
+
+      // Map rows from array to objects with unique column names
+      const resultRows = rows.map((row) => {
+        const obj = {};
+        const nameCount = {};
+
+        fields.forEach((field, index) => {
+          let name = (field.name || `Column_${index + 1}`).trim();
+          if (nameCount[name] !== undefined) {
+            nameCount[name]++;
+            name = `${name}_${nameCount[name]}`;
+          } else {
+            nameCount[name] = 0;
+          }
+          obj[name] = row[index];
+        });
+        return obj;
+      });
+
       return {
-        rows: Array.isArray(rows) ? rows : [rows],
+        rows: resultRows,
         executionTime,
-        rowCount: Array.isArray(rows) ? rows.length : rows.affectedRows || 0,
+        rowCount: rows.length,
+        debug: {
+          fieldsCount: fields.length,
+          rowZeroLength: rows[0] ? rows[0].length : 0,
+          rawFields: fields.map((f) => f.name),
+        },
       };
     } catch (error) {
       throw new Error(`Query Error: ${error.message}`);

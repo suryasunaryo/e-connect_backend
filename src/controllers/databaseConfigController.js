@@ -31,9 +31,10 @@ export const getConnection = async (req, res) => {
       return res.status(404).json({ error: "Connection not found" });
     }
 
-    // Decrypt password before sending to frontend if needed (usually we don't send it back)
-    // For editing, we might need it, or just send a placeholder
-    connection.password = "********";
+    // Decrypt password before sending to frontend for editing
+    if (connection.password) {
+      connection.password = decrypt(connection.password);
+    }
     res.json(connection);
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -59,7 +60,8 @@ export const createConnection = async (req, res) => {
       additional_params,
     } = req.body;
 
-    const encryptedPassword = encrypt(password);
+    const encryptedPassword = password ? encrypt(password) : null;
+    const safeUsername = username || null;
 
     const result = await dbHelpers.execute(
       `INSERT INTO database_connections (
@@ -74,7 +76,7 @@ export const createConnection = async (req, res) => {
         host,
         port,
         database_name,
-        username,
+        safeUsername,
         encryptedPassword,
         ssl_enabled ? 1 : 0,
         timeout || 30,
@@ -159,7 +161,103 @@ export const getTables = async (req, res) => {
   }
 };
 
-// Execute query
+// Update connection
+export const updateConnection = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const {
+      name,
+      db_type,
+      network_type,
+      host,
+      port,
+      database_name,
+      username,
+      password,
+      ssl_enabled,
+      timeout,
+      charset,
+      db_schema,
+      additional_params,
+      is_active,
+    } = req.body;
+
+    // Build dynamic UPDATE query
+    const updates = [];
+    const params = [];
+
+    if (name !== undefined) {
+      updates.push("name = ?");
+      params.push(name);
+    }
+    if (db_type !== undefined) {
+      updates.push("db_type = ?");
+      params.push(db_type);
+    }
+    if (network_type !== undefined) {
+      updates.push("network_type = ?");
+      params.push(network_type);
+    }
+    if (host !== undefined) {
+      updates.push("host = ?");
+      params.push(host);
+    }
+    if (port !== undefined) {
+      updates.push("port = ?");
+      params.push(port);
+    }
+    if (database_name !== undefined) {
+      updates.push("database_name = ?");
+      params.push(database_name);
+    }
+    if (username !== undefined) {
+      updates.push("username = ?");
+      params.push(username || null);
+    }
+    if (password !== undefined) {
+      updates.push("password = ?");
+      params.push(password ? encrypt(password) : null);
+    }
+    if (ssl_enabled !== undefined) {
+      updates.push("ssl_enabled = ?");
+      params.push(ssl_enabled ? 1 : 0);
+    }
+    if (timeout !== undefined) {
+      updates.push("timeout = ?");
+      params.push(timeout);
+    }
+    if (charset !== undefined) {
+      updates.push("charset = ?");
+      params.push(charset);
+    }
+    if (db_schema !== undefined) {
+      updates.push("db_schema = ?");
+      params.push(db_schema);
+    }
+    if (additional_params !== undefined) {
+      updates.push("additional_params = ?");
+      params.push(JSON.stringify(additional_params));
+    }
+    if (is_active !== undefined) {
+      updates.push("is_active = ?");
+      params.push(is_active ? 1 : 0);
+    }
+
+    if (updates.length === 0) {
+      return res.status(400).json({ error: "No fields provided for update" });
+    }
+
+    params.push(id);
+    await dbHelpers.execute(
+      `UPDATE database_connections SET ${updates.join(", ")}, updated_at = NOW() WHERE id = ?`,
+      params,
+    );
+
+    res.json({ message: "Connection updated successfully" });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+};
 export const executeQuery = async (req, res) => {
   try {
     const { id } = req.params;
@@ -298,17 +396,45 @@ export const getAllSavedQueriesManagement = async (req, res) => {
   }
 };
 
-// Update a saved query (Permissions & Status)
+// Update a saved query (Permissions, Status, & SQL)
 export const updateSavedQuery = async (req, res) => {
   try {
     const { id } = req.params;
-    const { name, target_type, target_value, is_active } = req.body;
+    const { name, target_type, target_value, is_active, sql_query } = req.body;
 
+    // Build SET clause dynamically to avoid overwriting with undefined if not provided
+    const updates = [];
+    const params = [];
+
+    if (name !== undefined) {
+      updates.push("name = ?");
+      params.push(name);
+    }
+    if (target_type !== undefined) {
+      updates.push("target_type = ?");
+      params.push(target_type);
+    }
+    if (target_value !== undefined) {
+      updates.push("target_value = ?");
+      params.push(target_value);
+    }
+    if (is_active !== undefined) {
+      updates.push("is_active = ?");
+      params.push(is_active ? 1 : 0);
+    }
+    if (sql_query !== undefined) {
+      updates.push("sql_query = ?");
+      params.push(sql_query);
+    }
+
+    if (updates.length === 0) {
+      return res.status(400).json({ error: "No fields to update" });
+    }
+
+    params.push(id);
     await dbHelpers.execute(
-      `UPDATE database_saved_queries 
-       SET name = ?, target_type = ?, target_value = ?, is_active = ? 
-       WHERE id = ?`,
-      [name, target_type, target_value, is_active ? 1 : 0, id],
+      `UPDATE database_saved_queries SET ${updates.join(", ")} WHERE id = ?`,
+      params,
     );
 
     res.json({ message: "Saved query updated successfully" });

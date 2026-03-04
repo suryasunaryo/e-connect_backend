@@ -26,6 +26,11 @@ router.post("/discover-databases", dbConfigController.discoverDatabases);
 
 // Connection-specific routes (Parameterized routes last)
 router.get("/:id", dbConfigController.getConnection);
+router.put(
+  "/:id",
+  activityLogger.logModuleActivity("database_connections", "UPDATE"),
+  dbConfigController.updateConnection,
+);
 router.get("/:id/tables", dbConfigController.getTables);
 router.post(
   "/:id/query",

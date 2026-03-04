@@ -117,9 +117,21 @@ export class MSSQLAdapter extends BaseAdapter {
             const row = rows[i];
             const obj = {};
             const colCount = row.length;
+            const nameCount = {}; // To handle duplicate column names
+
             for (let j = 0; j < colCount; j++) {
               const col = row[j];
-              obj[col.metadata.colName] = col.value;
+              let colName = col.metadata.colName || `Column_${j + 1}`;
+
+              // Handle duplicate column names
+              if (nameCount[colName] !== undefined) {
+                nameCount[colName]++;
+                colName = `${colName}_${nameCount[colName]}`;
+              } else {
+                nameCount[colName] = 0;
+              }
+
+              obj[colName] = col.value;
             }
             resultRows[i] = obj;
           }
