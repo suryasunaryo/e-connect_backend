@@ -1895,10 +1895,166 @@ const createTablesIfNeeded = async (pool) => {
         );
       }
     }
+    // Check and create database_connections table
+    const [dbConnectionsTable] = await connection.execute(
+      "SELECT COUNT(*) as count FROM information_schema.tables WHERE table_schema = ? AND table_name = 'database_connections'",
+      [dbConfig.database],
+    );
+
+    if (dbConnectionsTable[0].count === 0) {
+      console.log("📋 Creating database_connections table...");
+      await connection.execute(`
+        CREATE TABLE database_connections (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            name VARCHAR(100) NOT NULL,
+            db_type ENUM('mysql', 'postgresql', 'mssql', 'oracle') NOT NULL,
+            network_type VARCHAR(50) DEFAULT 'TCP/IP',
+            host VARCHAR(255) NOT NULL,
+            port INT NOT NULL,
+            database_name VARCHAR(255) NOT NULL,
+            username VARCHAR(255) NOT NULL,
+            password TEXT NOT NULL,
+            ssl_enabled BOOLEAN DEFAULT FALSE,
+            timeout INT DEFAULT 30,
+            charset VARCHAR(50) DEFAULT 'utf8mb4',
+            db_schema VARCHAR(255),
+            additional_params JSON,
+            is_active TINYINT(1) DEFAULT 1,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            deleted_at TIMESTAMP NULL,
+            is_deleted TINYINT(1) DEFAULT 0
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+      `);
+      console.log("✅ database_connections table created successfully");
+    }
+
+    // Check and create database_saved_queries table
+    const [savedQueriesTable] = await connection.execute(
+      "SELECT COUNT(*) as count FROM information_schema.tables WHERE table_schema = ? AND table_name = 'database_saved_queries'",
+      [dbConfig.database],
+    );
+
+    if (savedQueriesTable[0].count === 0) {
+      console.log("📋 Creating database_saved_queries table...");
+      await connection.execute(`
+        CREATE TABLE database_saved_queries (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            connection_id INT NOT NULL,
+            name VARCHAR(255) NOT NULL,
+            sql_query TEXT NOT NULL,
+            target_type ENUM('all', 'department', 'role', 'user') DEFAULT 'all',
+            target_value VARCHAR(255) NULL,
+            is_active TINYINT(1) DEFAULT 1,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            FOREIGN KEY (connection_id) REFERENCES database_connections(id) ON DELETE CASCADE
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+      `);
+      console.log("✅ database_saved_queries table created successfully");
+    } else {
+      // Migration: Add new columns if they don't exist
+      try {
+        const [sqColCheck1] = await connection.execute(
+          "SELECT COUNT(*) as count FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = ? AND TABLE_NAME = 'database_saved_queries' AND COLUMN_NAME = 'target_type'",
+          [dbConfig.database],
+        );
+        if (sqColCheck1[0].count === 0) {
+          console.log(
+            "migrating: Adding target_type, target_value, is_active to database_saved_queries...",
+          );
+          await connection.execute(
+            "ALTER TABLE database_saved_queries ADD COLUMN target_type ENUM('all', 'department', 'role', 'user') DEFAULT 'all' AFTER sql_query",
+          );
+          await connection.execute(
+            "ALTER TABLE database_saved_queries ADD COLUMN target_value VARCHAR(255) NULL AFTER target_type",
+          );
+          await connection.execute(
+            "ALTER TABLE database_saved_queries ADD COLUMN is_active TINYINT(1) DEFAULT 1 AFTER target_value",
+          );
+          console.log("✅ saved queries columns added.");
+        }
+      } catch (migErr) {
+        console.error(
+          "Migration warning (database_saved_queries):",
+          migErr.message,
+        );
+      }
+    }
+
+    // Migration: Update Admin role (role_id = '1') with 'Database Saved Queries'
+    try {
+      const [adminRole] = await connection.execute(
+        "SELECT id, menu_groups, menu_access, menu_permissions FROM users_role WHERE role_id = '1' AND deleted_at IS NULL",
+      );
+
+      if (adminRole.length > 0) {
+        let { menu_groups, menu_access, menu_permissions } = adminRole[0];
+        let updated = false;
+
+        // Update menu_groups
+        if (menu_groups) {
+          const groups = menu_groups.split(",").map((g) => g.trim());
+          if (!groups.includes("Project Setup")) {
+            groups.push("Project Setup");
+            menu_groups = groups.join(",");
+            updated = true;
+          }
+        } else {
+          menu_groups = "Project Setup";
+          updated = true;
+        }
+
+        // Update menu_access
+        if (menu_access) {
+          const access = menu_access.split(",").map((a) => a.trim());
+          if (!access.includes("Database Saved Queries")) {
+            access.push("Database Saved Queries");
+            menu_access = access.join(",");
+            updated = true;
+          }
+        } else {
+          menu_access = "Database Saved Queries";
+          updated = true;
+        }
+
+        // Update menu_permissions
+        try {
+          let perms = {};
+          if (menu_permissions) {
+            perms =
+              typeof menu_permissions === "string"
+                ? JSON.parse(menu_permissions)
+                : menu_permissions;
+          }
+
+          if (typeof perms !== "object" || perms === null) {
+            perms = {};
+          }
+
+          if (!perms["Database Saved Queries"]) {
+            perms["Database Saved Queries"] = ["C", "R", "U", "D"];
+            menu_permissions = JSON.stringify(perms);
+            updated = true;
+          }
+        } catch (pErr) {
+          console.error("Error parsing menu_permissions:", pErr.message);
+        }
+
+        if (updated) {
+          console.log("migrating: Updating Admin role permissions...");
+          await connection.execute(
+            "UPDATE users_role SET menu_groups = ?, menu_access = ?, menu_permissions = ? WHERE role_id = '1'",
+            [menu_groups, menu_access, menu_permissions],
+          );
+          console.log("✅ Admin role permissions updated.");
+        }
+      }
+    } catch (migErr) {
+      console.error("Migration error (Admin permissions):", migErr.message);
+    }
   } catch (error) {
-    console.error("❌ Error creating tables:", error);
-    // Don't throw error to allow server to start even if table creation fails
-    // throw error;
+    console.error("❌ Error creating/checking database tables:", error.message);
   } finally {
     if (connection) connection.release();
   }
@@ -2069,8 +2225,16 @@ export const getPhotoTypeFolder = (field, folderInfo) => {
   return folderInfo.basePath;
 };
 
+export const closeDatabase = async () => {
+  if (pool) {
+    await pool.end();
+    console.log("🔒 Database connection pool closed");
+  }
+};
+
 export default {
   initDatabase,
+  closeDatabase,
   getPool,
   dbHelpers,
   createUploadFolder,

@@ -24,6 +24,7 @@ import portalSettingsRoutes from "./routes/portalSettingsRoutes.js";
 import employeeSetupRoutes from "./routes/employeeSetupRoutes.js";
 import publicRoutes from "./routes/publicRoutes.js";
 import bannerRoutes from "./routes/bannerRoutes.js";
+import databaseConfigRoutes from "./routes/databaseConfigRoutes.js";
 
 // Load environment variables
 dotenv.config();
@@ -94,6 +95,7 @@ app.use(
 app.use("/api/portal-settings", authenticateToken, portalSettingsRoutes);
 app.use("/api/banners", authenticateToken, bannerRoutes);
 app.use("/api/employee-batch-setup", authenticateToken, employeeSetupRoutes);
+app.use("/api/db-config", databaseConfigRoutes);
 app.use("/api", apiRoutes);
 
 app.get("/", (req, res) => {
