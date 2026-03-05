@@ -261,7 +261,7 @@ export const updateConnection = async (req, res) => {
 export const executeQuery = async (req, res) => {
   try {
     const { id } = req.params;
-    const { sql, params } = req.body;
+    const { sql, params, limit, offset, should_count } = req.body;
 
     const connection = await dbHelpers.queryOne(
       "SELECT * FROM database_connections WHERE id = ?",
@@ -274,9 +274,52 @@ export const executeQuery = async (req, res) => {
 
     connection.password = decrypt(connection.password);
     const adapter = DatabaseFactory.createAdapter(connection);
-    const result = await adapter.executeQuery(sql, params);
+    const dbType = (connection.db_type || "mysql").toLowerCase();
 
-    res.json(result);
+    let finalSql = sql;
+    const paginationLimit = parseInt(limit) || 100;
+    const paginationOffset = parseInt(offset) || 0;
+
+    // 1. Get Total Count if requested
+    let totalCount = null;
+    if (should_count) {
+      const countSql = `SELECT COUNT(*) as total FROM (${sql}) AS count_t`;
+      try {
+        const countResult = await adapter.executeQuery(countSql, params);
+        // Handle different ways adapters might return the count result
+        const countRow = countResult.rows[0];
+        totalCount = countRow
+          ? countRow.total || countRow.TOTAL || Object.values(countRow)[0]
+          : 0;
+      } catch (countError) {
+        console.error("Count query failed:", countError);
+        // Fallback to null if count fails, don't crash the main query
+      }
+    }
+
+    // 2. Wrap query for pagination
+    if (dbType === "mysql" || dbType === "postgresql") {
+      finalSql = `SELECT * FROM (${sql}) AS t LIMIT ${paginationLimit} OFFSET ${paginationOffset}`;
+    } else if (dbType === "mssql") {
+      // MSSQL requires ORDER BY for OFFSET/FETCH. We use a constant to avoid changing original semantics.
+      finalSql = `SELECT * FROM (${sql}) AS t ORDER BY (SELECT NULL) OFFSET ${paginationOffset} ROWS FETCH NEXT ${paginationLimit} ROWS ONLY`;
+    } else if (dbType === "oracle") {
+      finalSql = `
+        SELECT * FROM (
+          SELECT a.*, ROWNUM rnum FROM (${sql}) a 
+          WHERE ROWNUM <= ${paginationOffset + paginationLimit}
+        ) WHERE rnum > ${paginationOffset}
+      `;
+    }
+
+    const result = await adapter.executeQuery(finalSql, params);
+
+    res.json({
+      ...result,
+      totalCount,
+      limit: paginationLimit,
+      offset: paginationOffset,
+    });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -380,16 +423,51 @@ export const deleteSavedQuery = async (req, res) => {
     res.status(500).json({ error: error.message });
   }
 };
-// Get all saved queries (Management view)
+// Get all saved queries (Management or Reports view)
 export const getAllSavedQueriesManagement = async (req, res) => {
   try {
-    const queries = await dbHelpers.query(`
+    const userId = req.user.id;
+    const userRole = req.user.role;
+    const { active_only } = req.query;
+
+    // Fetch user's department to allow department-based targeting
+    const userDetails = await dbHelpers.queryOne(
+      "SELECT department_id FROM employees WHERE user_id = ? OR nik = ?",
+      [userId, req.user.username],
+    );
+    const deptId = userDetails?.department_id;
+
+    // If user is admin (role 'admin' or '30' or '1'), show everything
+    const isAdmin =
+      userRole === "admin" || userRole === "30" || userRole === "1";
+
+    let sql = `
       SELECT q.*, c.name as connection_name 
       FROM database_saved_queries q
       JOIN database_connections c ON q.connection_id = c.id
       WHERE c.is_deleted = 0
-      ORDER BY q.created_at DESC
-    `);
+    `;
+    const params = [];
+
+    if (active_only === "true") {
+      sql += " AND q.is_active = 1";
+    }
+
+    if (!isAdmin) {
+      sql += `
+        AND (
+          q.target_type = 'all'
+          OR (q.target_type = 'role' AND FIND_IN_SET(?, q.target_value))
+          OR (q.target_type = 'user' AND FIND_IN_SET(?, q.target_value))
+          OR (q.target_type = 'department' AND FIND_IN_SET(?, q.target_value))
+        )
+      `;
+      params.push(userRole, userId, deptId);
+    }
+
+    sql += " ORDER BY q.created_at DESC";
+
+    const queries = await dbHelpers.query(sql, params);
     res.json(queries);
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -438,6 +516,53 @@ export const updateSavedQuery = async (req, res) => {
     );
 
     res.json({ message: "Saved query updated successfully" });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+};
+// Preview a saved query (execute with limit for field discovery)
+export const previewSavedQuery = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { limit = 10, params = [] } = req.query;
+
+    const savedQuery = await dbHelpers.queryOne(
+      "SELECT * FROM database_saved_queries WHERE id = ?",
+      [id],
+    );
+
+    if (!savedQuery) {
+      return res.status(404).json({ error: "Saved query not found" });
+    }
+
+    const connection = await dbHelpers.queryOne(
+      "SELECT * FROM database_connections WHERE id = ?",
+      [savedQuery.connection_id],
+    );
+
+    if (!connection) {
+      return res.status(404).json({ error: "Connection not found" });
+    }
+
+    connection.password = decrypt(connection.password);
+    const adapter = DatabaseFactory.createAdapter(connection);
+    const dbType = (connection.db_type || "mysql").toLowerCase();
+
+    let sql = savedQuery.sql_query;
+    const paginationLimit = parseInt(limit);
+
+    // Simple pagination wrap
+    let finalSql = sql;
+    if (dbType === "mysql" || dbType === "postgresql") {
+      finalSql = `SELECT * FROM (${sql}) AS t LIMIT ${paginationLimit}`;
+    } else if (dbType === "mssql") {
+      finalSql = `SELECT TOP ${paginationLimit} * FROM (${sql}) AS t`;
+    } else if (dbType === "oracle") {
+      finalSql = `SELECT * FROM (${sql}) WHERE ROWNUM <= ${paginationLimit}`;
+    }
+
+    const result = await adapter.executeQuery(finalSql, params);
+    res.json(result);
   } catch (error) {
     res.status(500).json({ error: error.message });
   }

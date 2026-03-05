@@ -10,6 +10,7 @@ router.use(authenticateToken);
 
 // Saved Queries (Specific routes first)
 router.get("/saved-queries", dbConfigController.getAllSavedQueriesManagement);
+router.get("/saved-queries/:id/preview", dbConfigController.previewSavedQuery);
 router.post("/saved-queries", dbConfigController.saveQuery);
 router.put("/saved-queries/:id", dbConfigController.updateSavedQuery);
 router.delete("/saved-queries/:id", dbConfigController.deleteSavedQuery);

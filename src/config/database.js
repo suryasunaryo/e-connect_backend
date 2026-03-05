@@ -1998,6 +1998,34 @@ const createTablesIfNeeded = async (pool) => {
       }
     }
 
+    // ---------------------------------------------------------
+    // MIGRATION: report_templates table
+    // ---------------------------------------------------------
+    const [reportTemplatesTable] = await connection.execute(
+      "SELECT COUNT(*) as count FROM information_schema.tables WHERE table_schema = ? AND table_name = 'report_templates'",
+      [dbConfig.database],
+    );
+
+    if (reportTemplatesTable[0].count === 0) {
+      console.log("📋 Creating report_templates table...");
+      await connection.execute(`
+        CREATE TABLE report_templates (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            name VARCHAR(255) NOT NULL,
+            description TEXT NULL,
+            config JSON NOT NULL,
+            is_active TINYINT(1) DEFAULT 1,
+            created_by INT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            deleted_at TIMESTAMP NULL,
+            is_deleted TINYINT(1) DEFAULT 0,
+            FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+      `);
+      console.log("✅ report_templates table created successfully");
+    }
+
     // Migration: Update Admin role (role_id = '1') with 'Database Saved Queries'
     try {
       const [adminRole] = await connection.execute(
